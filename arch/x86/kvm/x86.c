@@ -20,6 +20,7 @@
 #include "irq.h"
 #include "ioapic.h"
 #include "mmu.h"
+#include "mmu/tdp_mmu.h"
 #include "i8254.h"
 #include "tss.h"
 #include "kvm_cache_regs.h"
@@ -31,6 +32,7 @@
 #include "lapic.h"
 #include "xen.h"
 #include "smm.h"
+#include "vmx/capabilities.h"
 
 #include <linux/clocksource.h>
 #include <linux/interrupt.h>
@@ -9705,6 +9707,45 @@ heki_page_track_prewrite(struct kvm_vcpu *const vcpu, const gpa_t gpa,
 	return true;
 }
 
+bool heki_exec_is_allowed(const struct kvm *const kvm, const gfn_t gfn)
+{
+	unsigned int gfn_last;
+
+	if (!READ_ONCE(kvm->heki_kernel_exec_locked))
+		return true;
+
+	/*
+	 * heki_gfn_exec_last is initialized with (HEKI_GFN_MAX + 1),
+	 * and 0 means that heki_gfn_exec_last is full.
+	 */
+	for (gfn_last = atomic_read(&kvm->heki_gfn_exec_last);
+	     gfn_last > 0 && gfn_last <= HEKI_GFN_MAX;) {
+		gfn_last--;
+
+		/* Ignores unused slots. */
+		if (kvm->heki_gfn_exec[gfn_last].end == 0)
+			break;
+
+		if (gfn >= kvm->heki_gfn_exec[gfn_last].start &&
+		    gfn <= kvm->heki_gfn_exec[gfn_last].end) {
+			/* TODO: Opportunistically shrink heki_gfn_exec. */
+			return true;
+		}
+	}
+	return false;
+}
+
+bool kvm_heki_is_exec_allowed(struct kvm_vcpu *vcpu, gpa_t gpa)
+{
+	const gfn_t gfn = gpa_to_gfn(gpa);
+	const struct kvm *const kvm = vcpu->kvm;
+
+	if (heki_exec_is_allowed(kvm, gfn))
+		return true;
+
+	return false;
+}
+
 static int kvm_heki_init_vm(struct kvm *const kvm)
 {
 	struct kvm_page_track_notifier_node *const node =
@@ -9733,6 +9774,7 @@ static int heki_lock_mem_page_ranges(struct kvm *const kvm, gpa_t mem_ranges,
 	int err;
 	size_t i, ranges_num;
 	struct heki_pa_range *ranges;
+	bool has_exec_restriction = false;
 
 	if (mem_ranges_size > HEKI_PA_RANGE_MAX_SIZE)
 		return -KVM_E2BIG;
@@ -9752,7 +9794,8 @@ static int heki_lock_mem_page_ranges(struct kvm *const kvm, gpa_t mem_ranges,
 
 	ranges_num = mem_ranges_size / sizeof(struct heki_pa_range);
 	for (i = 0; i < ranges_num; i++) {
-		const u64 attributes_mask = HEKI_ATTR_MEM_NOWRITE;
+		const u64 attributes_mask = HEKI_ATTR_MEM_NOWRITE |
+					    HEKI_ATTR_MEM_EXEC;
 		const gfn_t gfn_start = ranges[i].gfn_start;
 		const gfn_t gfn_end = ranges[i].gfn_end;
 		const u64 attributes = ranges[i].attributes;
@@ -9799,10 +9842,51 @@ static int heki_lock_mem_page_ranges(struct kvm *const kvm, gpa_t mem_ranges,
 					kvm, gfn, KVM_PAGE_TRACK_PREWRITE));
 		}
 
-		pr_warn("heki-kvm: Locking GFN 0x%llx-0x%llx with %s\n",
+		/*
+		 * Allow-list for execute permission,
+		 * see kvm_heki_fix_all_ept_exec_perm().
+		 */
+		if (attributes & HEKI_ATTR_MEM_EXEC) {
+			size_t gfn_i;
+
+			if (!enable_mbec) {
+				/*
+				 * Guests can check for MBEC support to avoid
+				 * such error by not using HEKI_ATTR_MEM_EXEC.
+				 */
+				err = -KVM_EOPNOTSUPP;
+				pr_warn("heki-kvm: HEKI_ATTR_MEM_EXEC "
+					"depends on MBEC, which is disabled.");
+				/*
+				 * We should continue partially applying
+				 * restrictions, but it is useful for this RFC
+				 * to exit early in case of missing MBEC
+				 * support.
+				 */
+				goto out_free_ranges;
+			}
+
+			has_exec_restriction = true;
+			gfn_i = atomic_dec_if_positive(
+				&kvm->heki_gfn_exec_last);
+			if (gfn_i == 0) {
+				err = -KVM_E2BIG;
+				goto out_free_ranges;
+			}
+
+			gfn_i--;
+			kvm->heki_gfn_exec[gfn_i].start = gfn_start;
+			kvm->heki_gfn_exec[gfn_i].end = gfn_end;
+		}
+
+		pr_warn("heki-kvm: Locking GFN 0x%llx-0x%llx with %s%s\n",
 			gfn_start, gfn_end,
-			(attributes & HEKI_ATTR_MEM_NOWRITE) ? "[nowrite]" : "");
+			(attributes & HEKI_ATTR_MEM_NOWRITE) ? "[nowrite]" : "",
+			(attributes & HEKI_ATTR_MEM_EXEC) ? "[exec]" : "");
 	}
+
+	if (has_exec_restriction)
+		kvm_heki_fix_all_ept_exec_perm(kvm);
 
 out_free_ranges:
 	kfree(ranges);

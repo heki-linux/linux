@@ -282,12 +282,19 @@ int heki_check_cr(const struct kvm *kvm, unsigned long cr, unsigned long val);
 
 bool kvm_heki_is_exec_allowed(struct kvm_vcpu *vcpu, gpa_t gpa);
 
+bool heki_exec_is_allowed(const struct kvm *const kvm, const gfn_t gfn);
+
 #else /* CONFIG_HEKI */
 
 static inline int heki_check_cr(const struct kvm *const kvm,
 				const unsigned long cr, const unsigned long val)
 {
 	return 0;
+}
+
+static inline bool kvm_heki_is_exec_allowed(struct kvm_vcpu *vcpu, gpa_t gpa)
+{
+	return true;
 }
 
 #endif /* CONFIG_HEKI */

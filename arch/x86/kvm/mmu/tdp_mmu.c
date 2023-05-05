@@ -7,7 +7,10 @@
 #include "tdp_mmu.h"
 #include "spte.h"
 
+#include "../x86.h"
+
 #include <asm/cmpxchg.h>
+#include <asm/vmx.h>
 #include <trace/events/kvm.h>
 
 static bool __read_mostly tdp_mmu_enabled = true;
@@ -1020,6 +1023,76 @@ void kvm_tdp_mmu_zap_all(struct kvm *kvm)
 			tdp_mmu_zap_root(kvm, root, false);
 	}
 }
+
+#ifdef CONFIG_HEKI
+
+/* TODO: Handle flush? */
+void kvm_heki_fix_all_ept_exec_perm(struct kvm *const kvm)
+{
+	int i;
+	struct kvm_mmu_page *root;
+	const gfn_t start = 0;
+	const gfn_t end = tdp_mmu_max_gfn_exclusive();
+
+	if (WARN_ON_ONCE(!is_tdp_mmu_enabled(kvm)))
+		return;
+
+	if (WARN_ON_ONCE(!enable_mbec))
+		return;
+
+	write_lock(&kvm->mmu_lock);
+
+	/*
+	 * Because heki_exec_locked is only set with this code, it cannot be
+	 * unlocked.  This is protected against race condition thanks to
+	 * mmu_lock.
+	 */
+	WRITE_ONCE(kvm->heki_kernel_exec_locked, true);
+
+	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
+		for_each_tdp_mmu_root(kvm, root, i) {
+			struct tdp_iter iter;
+
+			WARN_ON_ONCE(!refcount_read(&root->tdp_mmu_root_count));
+
+			/*
+			 * TODO: Make sure
+			 * !is_shadow_present_pte()/SPTE_MMU_PRESENT_MASK are
+			 * well handled when they are present.
+			 */
+
+			rcu_read_lock();
+			tdp_root_for_each_leaf_pte(iter, root, start, end) {
+				u64 new_spte;
+
+				if (heki_exec_is_allowed(kvm, iter.gfn)) {
+					pr_warn("heki-kvm: Allowing kernel "
+						"execution for GFN 0x%llx\n",
+						iter.gfn);
+					continue;
+				}
+				pr_warn("heki-kvm: Denying kernel execution "
+					"for GFN 0x%llx\n",
+					iter.gfn);
+
+retry:
+				new_spte = iter.old_spte &
+					   ~VMX_EPT_EXECUTABLE_MASK;
+				if (new_spte == iter.old_spte)
+					continue;
+
+				if (tdp_mmu_set_spte_atomic(kvm, &iter,
+							    new_spte))
+					goto retry;
+			}
+			rcu_read_unlock();
+		}
+	}
+	write_unlock(&kvm->mmu_lock);
+	pr_warn("heki-kvm: Locked executable kernel memory\n");
+}
+
+#endif /* CONFIG_HEKI */
 
 /*
  * Zap all invalidated roots to ensure all SPTEs are dropped before the "fast

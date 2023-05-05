@@ -184,10 +184,25 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 		pte_access &= ~ACC_EXEC_MASK;
 	}
 
-	if (pte_access & ACC_EXEC_MASK)
+	if (pte_access & ACC_EXEC_MASK) {
 		spte |= shadow_x_mask;
-	else
+#ifdef CONFIG_HEKI
+		/*
+		 * FIXME: Race condition (at boot) if no
+		 * lockdep_assert_held_write(vcpu->kvm->mmu_lock);
+		 */
+		if (READ_ONCE(vcpu->kvm->heki_kernel_exec_locked)) {
+			if (!heki_exec_is_allowed(vcpu->kvm, gfn))
+				spte &= ~VMX_EPT_EXECUTABLE_MASK;
+			else
+				pr_warn("heki-kvm: Allowing kernel execution "
+					"for GFN 0x%llx\n",
+					gfn);
+		}
+#endif /* CONFIG_HEKI */
+	} else {
 		spte |= shadow_nx_mask;
+	}
 
 	if (pte_access & ACC_USER_MASK)
 		spte |= shadow_user_mask;

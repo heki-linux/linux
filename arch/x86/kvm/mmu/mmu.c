@@ -3313,7 +3313,7 @@ fast_pf_fix_direct_spte(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 static bool is_access_allowed(struct kvm_page_fault *fault, u64 spte)
 {
 	if (fault->exec)
-		return is_executable_pte(spte);
+		return is_executable_pte(spte, !fault->user);
 
 	if (fault->write)
 		return is_writable_pte(spte);
@@ -5601,6 +5601,39 @@ int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 err
 
 	if (WARN_ON(!VALID_PAGE(vcpu->arch.mmu->root.hpa)))
 		return RET_PF_RETRY;
+
+	/* Skips real page faults if not needed. */
+	if ((error_code & PFERR_FETCH_MASK) &&
+	    !kvm_heki_is_exec_allowed(vcpu, cr2_or_gpa)) {
+		/*
+		 * TODO: To avoid kvm_heki_is_exec_allowed() call, check
+		 * enable_mbec and EPT_VIOLATION_KERNEL_INSTR, see
+		 * handle_ept_violation().
+		 */
+		struct x86_exception fault = {
+			.vector = PF_VECTOR,
+			.error_code_valid = true,
+			.error_code = error_code,
+			.nested_page_fault = false,
+			/*
+			 * TODO: This kind of kernel page fault needs to be handled by
+			 * the guest, which is not currently the case, making it try
+			 * again and again.
+			 *
+			 * You may want to test with cr2_or_gva to see the page
+			 * fault caught by the guest kernel (thinking it is a
+			 * user space fault).
+			 */
+			.address = static_call(kvm_x86_fault_gva)(vcpu),
+			.async_page_fault = false,
+		};
+
+		pr_warn_ratelimited(
+			"heki-kvm: Creating fetch #PF at 0x%016llx\n",
+			fault.address);
+		kvm_inject_page_fault(vcpu, &fault);
+		return RET_PF_INVALID;
+	}
 
 	r = RET_PF_INVALID;
 	if (unlikely(error_code & PFERR_RSVD_MASK)) {

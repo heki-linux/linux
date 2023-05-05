@@ -204,7 +204,9 @@ must also set up an MSR filter to process writes to MSR_KVM_MIGRATION_CONTROL.
 
 The hypercall lets a guest request memory permissions to be removed for itself,
 identified with set of physical page ranges (GFNs).  The HEKI_ATTR_MEM_NOWRITE
-memory page range attribute forbids related modification to the guest.
+memory page range attribute forbids related modification to the guest.  The
+HEKI_ATTR_MEM_EXEC attribute allows execution on the specified pages while
+removing it for all the others.
 
 Returns 0 on success or a KVM error code otherwise.
 

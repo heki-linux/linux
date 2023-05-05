@@ -812,9 +812,13 @@ struct kvm {
 #define HEKI_GFN_MAX 16
 	atomic_t heki_gfn_no_write_num;
 	struct heki_gfn_range heki_gfn_no_write[HEKI_GFN_MAX];
+	atomic_t heki_gfn_exec_last;
+	struct heki_gfn_range heki_gfn_exec[HEKI_GFN_MAX];
 
 	atomic_long_t heki_pinned_cr0;
 	atomic_long_t heki_pinned_cr4;
+
+	bool heki_kernel_exec_locked;
 #endif /* CONFIG_HEKI */
 
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER

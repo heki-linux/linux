@@ -1232,6 +1232,7 @@ static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
 
 #ifdef CONFIG_HEKI
 	atomic_set(&kvm->heki_gfn_no_write_num, HEKI_GFN_MAX + 1);
+	atomic_set(&kvm->heki_gfn_exec_last, HEKI_GFN_MAX + 1);
 #endif /* CONFIG_HEKI */
 
 	preempt_notifier_inc();
