@@ -144,6 +144,12 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	u64 spte = SPTE_MMU_PRESENT_MASK;
 	bool wrprot = false;
 
+	if (kvm_slot_page_track_is_active(vcpu->kvm, slot, gfn,
+					  KVM_PAGE_TRACK_PREWRITE) ||
+	    kvm_slot_page_track_is_active(vcpu->kvm, slot, gfn,
+					  KVM_PAGE_TRACK_WRITE))
+		pte_access &= ~ACC_WRITE_MASK;
+
 	WARN_ON_ONCE(!pte_access && !shadow_present_mask);
 
 	if (sp->role.ad_disabled)

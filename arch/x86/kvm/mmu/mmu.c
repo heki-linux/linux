@@ -793,9 +793,13 @@ static void account_shadowed(struct kvm *kvm, struct kvm_mmu_page *sp)
 	slot = __gfn_to_memslot(slots, gfn);
 
 	/* the non-leaf shadow pages are keeping readonly. */
-	if (sp->role.level > PG_LEVEL_4K)
-		return kvm_slot_page_track_add_page(kvm, slot, gfn,
-						    KVM_PAGE_TRACK_WRITE);
+	if (sp->role.level > PG_LEVEL_4K) {
+		kvm_slot_page_track_add_page(kvm, slot, gfn,
+					     KVM_PAGE_TRACK_PREWRITE);
+		kvm_slot_page_track_add_page(kvm, slot, gfn,
+					     KVM_PAGE_TRACK_WRITE);
+		return;
+	}
 
 	kvm_mmu_gfn_disallow_lpage(slot, gfn);
 
@@ -840,9 +844,13 @@ static void unaccount_shadowed(struct kvm *kvm, struct kvm_mmu_page *sp)
 	gfn = sp->gfn;
 	slots = kvm_memslots_for_spte_role(kvm, sp->role);
 	slot = __gfn_to_memslot(slots, gfn);
-	if (sp->role.level > PG_LEVEL_4K)
-		return kvm_slot_page_track_remove_page(kvm, slot, gfn,
-						       KVM_PAGE_TRACK_WRITE);
+	if (sp->role.level > PG_LEVEL_4K) {
+		kvm_slot_page_track_remove_page(kvm, slot, gfn,
+						KVM_PAGE_TRACK_PREWRITE);
+		kvm_slot_page_track_remove_page(kvm, slot, gfn,
+						KVM_PAGE_TRACK_WRITE);
+		return;
+	}
 
 	kvm_mmu_gfn_allow_lpage(slot, gfn);
 }
@@ -2714,7 +2722,10 @@ int mmu_try_to_unsync_pages(struct kvm *kvm, const struct kvm_memory_slot *slot,
 	 * track machinery is used to write-protect upper-level shadow pages,
 	 * i.e. this guards the role.level == 4K assertion below!
 	 */
-	if (kvm_slot_page_track_is_active(kvm, slot, gfn, KVM_PAGE_TRACK_WRITE))
+	if (kvm_slot_page_track_is_active(kvm, slot, gfn,
+						KVM_PAGE_TRACK_PREWRITE) ||
+	    kvm_slot_page_track_is_active(kvm, slot, gfn,
+						KVM_PAGE_TRACK_WRITE))
 		return -EPERM;
 
 	/*
@@ -4103,6 +4114,8 @@ static int handle_mmio_page_fault(struct kvm_vcpu *vcpu, u64 addr, bool direct)
 static bool page_fault_handle_page_track(struct kvm_vcpu *vcpu,
 					 struct kvm_page_fault *fault)
 {
+	bool ret = false;
+
 	if (unlikely(fault->rsvd))
 		return false;
 
@@ -4113,10 +4126,14 @@ static bool page_fault_handle_page_track(struct kvm_vcpu *vcpu,
 	 * guest is writing the page which is write tracked which can
 	 * not be fixed by page fault handler.
 	 */
-	if (kvm_slot_page_track_is_active(vcpu->kvm, fault->slot, fault->gfn, KVM_PAGE_TRACK_WRITE))
-		return true;
+	ret = kvm_slot_page_track_is_active(vcpu->kvm, fault->slot, fault->gfn,
+					    KVM_PAGE_TRACK_PREWRITE) ||
+	      ret;
+	ret = kvm_slot_page_track_is_active(vcpu->kvm, fault->slot, fault->gfn,
+					    KVM_PAGE_TRACK_WRITE) ||
+	      ret;
 
-	return false;
+	return ret;
 }
 
 static void shadow_page_table_clear_flood(struct kvm_vcpu *vcpu, gva_t addr)
@@ -5599,6 +5616,33 @@ int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 err
 		return r;
 	if (r != RET_PF_EMULATE)
 		return 1;
+
+	if ((error_code & PFERR_WRITE_MASK) &&
+	    !kvm_page_track_prewrite(vcpu, cr2_or_gpa)) {
+		struct x86_exception fault = {
+			.vector = PF_VECTOR,
+			.error_code_valid = true,
+			.error_code = error_code,
+			.nested_page_fault = false,
+			/*
+			 * TODO: This kind of kernel page fault needs to be handled by
+			 * the guest, which is not currently the case, making it try
+			 * again and again.
+			 *
+			 * You may want to test with cr2_or_gva to see the page
+			 * fault caught by the guest kernel (thinking it is a
+			 * user space fault).
+			 */
+			.address = static_call(kvm_x86_fault_gva)(vcpu),
+			.async_page_fault = false,
+		};
+
+		pr_warn_ratelimited(
+			"heki-kvm: Creating write #PF at 0x%016llx\n",
+			fault.address);
+		kvm_inject_page_fault(vcpu, &fault);
+		return RET_PF_INVALID;
+	}
 
 	/*
 	 * Before emulating the instruction, check if the error code

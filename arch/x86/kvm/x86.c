@@ -7325,6 +7325,7 @@ static int kvm_write_guest_virt_helper(gva_t addr, void *val, unsigned int bytes
 			r = X86EMUL_IO_NEEDED;
 			goto out;
 		}
+		kvm_page_track_write(vcpu, gpa, data, towrite);
 
 		bytes -= towrite;
 		data += towrite;
@@ -7441,13 +7442,12 @@ static int vcpu_mmio_gva_to_gpa(struct kvm_vcpu *vcpu, unsigned long gva,
 int emulator_write_phys(struct kvm_vcpu *vcpu, gpa_t gpa,
 			const void *val, int bytes)
 {
-	int ret;
-
-	ret = kvm_vcpu_write_guest(vcpu, gpa, val, bytes);
-	if (ret < 0)
-		return 0;
+	if (!kvm_page_track_prewrite(vcpu, gpa))
+		return X86EMUL_PROPAGATE_FAULT;
+	if (kvm_vcpu_write_guest(vcpu, gpa, val, bytes))
+		return X86EMUL_UNHANDLEABLE;
 	kvm_page_track_write(vcpu, gpa, val, bytes);
-	return 1;
+	return X86EMUL_CONTINUE;
 }
 
 struct read_write_emulator_ops {
@@ -7477,7 +7477,9 @@ static int read_prepare(struct kvm_vcpu *vcpu, void *val, int bytes)
 static int read_emulate(struct kvm_vcpu *vcpu, gpa_t gpa,
 			void *val, int bytes)
 {
-	return !kvm_vcpu_read_guest(vcpu, gpa, val, bytes);
+	if (kvm_vcpu_read_guest(vcpu, gpa, val, bytes))
+		return X86EMUL_UNHANDLEABLE;
+	return X86EMUL_CONTINUE;
 }
 
 static int write_emulate(struct kvm_vcpu *vcpu, gpa_t gpa,
@@ -7551,8 +7553,12 @@ static int emulator_read_write_onepage(unsigned long addr, void *val,
 			return X86EMUL_PROPAGATE_FAULT;
 	}
 
-	if (!ret && ops->read_write_emulate(vcpu, gpa, val, bytes))
-		return X86EMUL_CONTINUE;
+	if (!ret) {
+		ret = ops->read_write_emulate(vcpu, gpa, val, bytes);
+		if (ret != X86EMUL_UNHANDLEABLE)
+			/* Handles X86EMUL_CONTINUE and X86EMUL_PROPAGATE_FAULT. */
+			return ret;
+	}
 
 	/*
 	 * Is this MMIO handled locally?
@@ -7688,6 +7694,9 @@ static int emulator_cmpxchg_emulated(struct x86_emulate_ctxt *ctxt,
 	hva = kvm_vcpu_gfn_to_hva(vcpu, gpa_to_gfn(gpa));
 	if (kvm_is_error_hva(hva))
 		goto emul_write;
+
+	if (!kvm_page_track_prewrite(vcpu, gpa))
+		return X86EMUL_PROPAGATE_FAULT;
 
 	hva += offset_in_page(gpa);
 
