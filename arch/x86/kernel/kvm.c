@@ -29,6 +29,7 @@
 #include <linux/syscore_ops.h>
 #include <linux/cc_platform.h>
 #include <linux/efi.h>
+#include <linux/heki.h>
 #include <asm/timer.h>
 #include <asm/cpu.h>
 #include <asm/traps.h>
@@ -866,6 +867,45 @@ static void __init kvm_guest_init(void)
 	hardlockup_detector_disable();
 }
 
+#ifdef CONFIG_HEKI
+
+static int kvm_protect_ranges(struct heki_pa_range *ranges, int num_ranges)
+{
+	size_t size;
+	long err;
+
+	WARN_ON(in_interrupt());
+
+	size = sizeof(ranges[0]) * num_ranges;
+	err = kvm_hypercall3(KVM_HC_LOCK_MEM_PAGE_RANGES, __pa(ranges), size, 0);
+	if (WARN(err, "Failed to enforce memory protection: %ld\n", err))
+		return err;
+
+	return 0;
+}
+
+extern unsigned long cr4_pinned_mask;
+
+/*
+ * TODO: Check SMP policy consistency, e.g. with
+ * this_cpu_read(cpu_tlbstate.cr4)
+ */
+static int kvm_lock_crs(void)
+{
+	unsigned long cr4;
+	int err;
+
+	err = kvm_hypercall2(KVM_HC_LOCK_CR_UPDATE, 0, X86_CR0_WP);
+	if (err)
+		return err;
+
+	cr4 = __read_cr4();
+	err = kvm_hypercall2(KVM_HC_LOCK_CR_UPDATE, 4, cr4 & cr4_pinned_mask);
+	return err;
+}
+
+#endif /* CONFIG_HEKI */
+
 static noinline uint32_t __kvm_cpuid_base(void)
 {
 	if (boot_cpu_data.cpuid_level < 0)
@@ -999,6 +1039,37 @@ static bool kvm_sev_es_hcall_finish(struct ghcb *ghcb, struct pt_regs *regs)
 }
 #endif
 
+#ifdef CONFIG_HEKI
+
+static struct heki_hypervisor kvm_heki_hypervisor = {
+	.protect_ranges = kvm_protect_ranges,
+	.lock_crs = kvm_lock_crs,
+};
+
+static void kvm_init_heki(void)
+{
+	long err;
+
+	if (!kvm_para_available())
+		/* Cannot make KVM hypercalls. */
+		return;
+
+	err = kvm_hypercall3(KVM_HC_LOCK_MEM_PAGE_RANGES, -1, -1, -1);
+	if (err == -KVM_ENOSYS)
+		/* Ignores host. */
+		return;
+
+	heki.hypervisor = &kvm_heki_hypervisor;
+}
+
+#else /* CONFIG_HEKI */
+
+static void kvm_init_heki(void)
+{
+}
+
+#endif /* CONFIG_HEKI */
+
 const __initconst struct hypervisor_x86 x86_hyper_kvm = {
 	.name				= "KVM",
 	.detect				= kvm_detect,
@@ -1007,6 +1078,7 @@ const __initconst struct hypervisor_x86 x86_hyper_kvm = {
 	.init.x2apic_available		= kvm_para_available,
 	.init.msi_ext_dest_id		= kvm_msi_ext_dest_id,
 	.init.init_platform		= kvm_init_platform,
+	.init.init_heki			= kvm_init_heki,
 #if defined(CONFIG_AMD_MEM_ENCRYPT)
 	.runtime.sev_es_hcall_prepare	= kvm_sev_es_hcall_prepare,
 	.runtime.sev_es_hcall_finish	= kvm_sev_es_hcall_finish,

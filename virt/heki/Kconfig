@@ -6,7 +6,7 @@
 config HEKI
 	bool "Hypervisor Enforced Kernel Integrity (Heki)"
 	default y
-	depends on !JUMP_LABEL && ARCH_SUPPORTS_HEKI
+	depends on !JUMP_LABEL && ARCH_SUPPORTS_HEKI && HYPERVISOR_SUPPORTS_HEKI
 	select KVM_EXTERNAL_WRITE_TRACKING if KVM
 	help
 	  This feature enhances guest virtual machine security by taking
@@ -20,3 +20,10 @@ config ARCH_SUPPORTS_HEKI
 	  An architecture should select this when it can successfully build
 	  and run with CONFIG_HEKI. That is, it should provide all of the
 	  architecture support required for the HEKI feature.
+
+config HYPERVISOR_SUPPORTS_HEKI
+	bool "Hypervisor support for Heki"
+	help
+	  A hypervisor should select this when it can successfully build
+	  and run with CONFIG_HEKI. That is, it should provide all of the
+	  hypervisor support required for the Heki feature.

@@ -91,12 +91,6 @@ void heki_late_init(void)
 		return;
 	}
 
-	/*
-	 * Hypervisor support will be added in the future. When it is, the
-	 * hypervisor will be used to protect guest kernel memory and
-	 * control registers.
-	 */
-
 	if (!hypervisor) {
 		/* This happens for kernels running on bare metal as well. */
 		pr_warn("No hypervisor support\n");
