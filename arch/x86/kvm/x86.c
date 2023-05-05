@@ -59,6 +59,7 @@
 #include <linux/mem_encrypt.h>
 #include <linux/entry-kvm.h>
 #include <linux/suspend.h>
+#include <linux/heki.h>
 
 #include <trace/events/kvm.h>
 
@@ -9596,6 +9597,161 @@ no_yield:
 	return;
 }
 
+#ifdef CONFIG_HEKI
+
+static int heki_page_track_add(struct kvm *const kvm, const gfn_t gfn,
+			       const enum kvm_page_track_mode mode)
+{
+	struct kvm_memory_slot *slot;
+	int idx;
+
+	BUILD_BUG_ON(!IS_ENABLED(CONFIG_KVM_EXTERNAL_WRITE_TRACKING));
+
+	idx = srcu_read_lock(&kvm->srcu);
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!slot) {
+		srcu_read_unlock(&kvm->srcu, idx);
+		return -EINVAL;
+	}
+
+	write_lock(&kvm->mmu_lock);
+	kvm_slot_page_track_add_page(kvm, slot, gfn, mode);
+	write_unlock(&kvm->mmu_lock);
+	srcu_read_unlock(&kvm->srcu, idx);
+	return 0;
+}
+
+static bool
+heki_page_track_prewrite(struct kvm_vcpu *const vcpu, const gpa_t gpa,
+			 struct kvm_page_track_notifier_node *const node)
+{
+	const gfn_t gfn = gpa_to_gfn(gpa);
+	const struct kvm *const kvm = vcpu->kvm;
+	size_t i;
+
+	/* Checks if it is our own tracked pages, or those of someone else. */
+	for (i = 0; i < HEKI_GFN_MAX; i++) {
+		if (gfn >= kvm->heki_gfn_no_write[i].start &&
+		    gfn <= kvm->heki_gfn_no_write[i].end)
+			return false;
+	}
+
+	return true;
+}
+
+static int kvm_heki_init_vm(struct kvm *const kvm)
+{
+	struct kvm_page_track_notifier_node *const node =
+		kzalloc(sizeof(*node), GFP_KERNEL);
+
+	if (!node)
+		return -ENOMEM;
+
+	node->track_prewrite = heki_page_track_prewrite;
+	kvm_page_track_register_notifier(kvm, node);
+	return 0;
+}
+
+static bool is_gfn_overflow(unsigned long val)
+{
+	const gfn_t gfn_mask = gpa_to_gfn(~0);
+
+	return (val | gfn_mask) != gfn_mask;
+}
+
+#define HEKI_PA_RANGE_MAX_SIZE	(sizeof(struct heki_pa_range) * HEKI_GFN_MAX)
+
+static int heki_lock_mem_page_ranges(struct kvm *const kvm, gpa_t mem_ranges,
+				     unsigned long mem_ranges_size)
+{
+	int err;
+	size_t i, ranges_num;
+	struct heki_pa_range *ranges;
+
+	if (mem_ranges_size > HEKI_PA_RANGE_MAX_SIZE)
+		return -KVM_E2BIG;
+
+	if ((mem_ranges_size % sizeof(struct heki_pa_range)) != 0)
+		return -KVM_EINVAL;
+
+	ranges = kzalloc(mem_ranges_size, GFP_KERNEL);
+	if (!ranges)
+		return -KVM_E2BIG;
+
+	err = kvm_read_guest(kvm, mem_ranges, ranges, mem_ranges_size);
+	if (err) {
+		err = -KVM_EFAULT;
+		goto out_free_ranges;
+	}
+
+	ranges_num = mem_ranges_size / sizeof(struct heki_pa_range);
+	for (i = 0; i < ranges_num; i++) {
+		const u64 attributes_mask = HEKI_ATTR_MEM_NOWRITE;
+		const gfn_t gfn_start = ranges[i].gfn_start;
+		const gfn_t gfn_end = ranges[i].gfn_end;
+		const u64 attributes = ranges[i].attributes;
+
+		if (is_gfn_overflow(ranges[i].gfn_start)) {
+			err = -KVM_EINVAL;
+			goto out_free_ranges;
+		}
+		if (is_gfn_overflow(ranges[i].gfn_end)) {
+			err = -KVM_EINVAL;
+			goto out_free_ranges;
+		}
+		if (ranges[i].gfn_start > ranges[i].gfn_end) {
+			err = -KVM_EINVAL;
+			goto out_free_ranges;
+		}
+		if (!ranges[i].attributes) {
+			err = -KVM_EINVAL;
+			goto out_free_ranges;
+		}
+		if ((ranges[i].attributes | attributes_mask) !=
+		    attributes_mask) {
+			err = -KVM_EINVAL;
+			goto out_free_ranges;
+		}
+
+		if (attributes & HEKI_ATTR_MEM_NOWRITE) {
+			unsigned long gfn;
+			size_t gfn_i;
+
+			gfn_i = atomic_dec_if_positive(
+				&kvm->heki_gfn_no_write_num);
+			if (gfn_i == 0) {
+				err = -KVM_E2BIG;
+				goto out_free_ranges;
+			}
+
+			gfn_i--;
+			kvm->heki_gfn_no_write[gfn_i].start = gfn_start;
+			kvm->heki_gfn_no_write[gfn_i].end = gfn_end;
+
+			for (gfn = gfn_start; gfn <= gfn_end; gfn++)
+				WARN_ON_ONCE(heki_page_track_add(
+					kvm, gfn, KVM_PAGE_TRACK_PREWRITE));
+		}
+
+		pr_warn("heki-kvm: Locking GFN 0x%llx-0x%llx with %s\n",
+			gfn_start, gfn_end,
+			(attributes & HEKI_ATTR_MEM_NOWRITE) ? "[nowrite]" : "");
+	}
+
+out_free_ranges:
+	kfree(ranges);
+	return err;
+}
+
+#else /* CONFIG_HEKI */
+
+static int kvm_heki_init_vm(struct kvm *const kvm)
+{
+	return 0;
+}
+
+#endif /* CONFIG_HEKI */
+
 static int complete_hypercall_exit(struct kvm_vcpu *vcpu)
 {
 	u64 ret = vcpu->run->hypercall.ret;
@@ -9694,6 +9850,15 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		vcpu->arch.complete_userspace_io = complete_hypercall_exit;
 		return 0;
 	}
+#ifdef CONFIG_HEKI
+	case KVM_HC_LOCK_MEM_PAGE_RANGES:
+		/* No flags for now. */
+		if (a2)
+			ret = -KVM_EINVAL;
+		else
+			ret = heki_lock_mem_page_ranges(vcpu->kvm, a0, a1);
+		break;
+#endif /* CONFIG_HEKI */
 	default:
 		ret = -KVM_ENOSYS;
 		break;
@@ -12123,6 +12288,10 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 		goto out;
 
 	ret = kvm_mmu_init_vm(kvm);
+	if (ret)
+		goto out_page_track;
+
+	ret = kvm_heki_init_vm(kvm);
 	if (ret)
 		goto out_page_track;
 

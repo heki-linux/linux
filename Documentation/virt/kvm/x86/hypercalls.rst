@@ -190,3 +190,20 @@ the KVM_CAP_EXIT_HYPERCALL capability. Userspace must enable that capability
 before advertising KVM_FEATURE_HC_MAP_GPA_RANGE in the guest CPUID.  In
 addition, if the guest supports KVM_FEATURE_MIGRATION_CONTROL, userspace
 must also set up an MSR filter to process writes to MSR_KVM_MIGRATION_CONTROL.
+
+9. KVM_HC_LOCK_MEM_PAGE_RANGES
+------------------------------
+
+:Architecture: x86
+:Status: active
+:Purpose: Request memory page ranges to be restricted.
+
+- a0: physical address of a struct heki_pa_range array
+- a1: size of the array
+- a2: optional flags, must be 0 for now
+
+The hypercall lets a guest request memory permissions to be removed for itself,
+identified with set of physical page ranges (GFNs).  The HEKI_ATTR_MEM_NOWRITE
+memory page range attribute forbids related modification to the guest.
+
+Returns 0 on success or a KVM error code otherwise.

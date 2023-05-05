@@ -699,6 +699,13 @@ struct kvm_memslots {
 	int node_idx;
 };
 
+#ifdef CONFIG_HEKI
+struct heki_gfn_range {
+	gfn_t start;
+	gfn_t end;
+};
+#endif /* CONFIG_HEKI */
+
 struct kvm {
 #ifdef KVM_HAVE_MMU_RWLOCK
 	rwlock_t mmu_lock;
@@ -800,6 +807,12 @@ struct kvm {
 	bool dirty_ring_with_bitmap;
 	bool vm_bugged;
 	bool vm_dead;
+
+#ifdef CONFIG_HEKI
+#define HEKI_GFN_MAX 16
+	atomic_t heki_gfn_no_write_num;
+	struct heki_gfn_range heki_gfn_no_write[HEKI_GFN_MAX];
+#endif /* CONFIG_HEKI */
 
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
 	struct notifier_block pm_notifier;

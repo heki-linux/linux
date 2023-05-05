@@ -1230,6 +1230,10 @@ static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
 	list_add(&kvm->vm_list, &vm_list);
 	mutex_unlock(&kvm_lock);
 
+#ifdef CONFIG_HEKI
+	atomic_set(&kvm->heki_gfn_no_write_num, HEKI_GFN_MAX + 1);
+#endif /* CONFIG_HEKI */
+
 	preempt_notifier_inc();
 	kvm_init_pm_notifier(kvm);
 
