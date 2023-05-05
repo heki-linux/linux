@@ -276,6 +276,22 @@ static inline bool kvm_check_has_quirk(struct kvm *kvm, u64 quirk)
 	return !(kvm->arch.disabled_quirks & quirk);
 }
 
+#ifdef CONFIG_HEKI
+
+int heki_check_cr(const struct kvm *kvm, unsigned long cr, unsigned long val);
+
+bool kvm_heki_is_exec_allowed(struct kvm_vcpu *vcpu, gpa_t gpa);
+
+#else /* CONFIG_HEKI */
+
+static inline int heki_check_cr(const struct kvm *const kvm,
+				const unsigned long cr, const unsigned long val)
+{
+	return 0;
+}
+
+#endif /* CONFIG_HEKI */
+
 void kvm_inject_realmode_interrupt(struct kvm_vcpu *vcpu, int irq, int inc_eip);
 
 u64 get_kvmclock_ns(struct kvm *kvm);

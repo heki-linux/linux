@@ -3162,6 +3162,11 @@ void vmx_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long hw_cr0, old_cr0_pg;
 	u32 tmp;
+	int res;
+
+	res = heki_check_cr(vcpu->kvm, 0, cr0);
+	if (res)
+		return;
 
 	old_cr0_pg = kvm_read_cr0_bits(vcpu, X86_CR0_PG);
 
@@ -3323,6 +3328,11 @@ void vmx_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 	 * this bit, even if host CR4.MCE == 0.
 	 */
 	unsigned long hw_cr4;
+	int res;
+
+	res = heki_check_cr(vcpu->kvm, 4, cr4);
+	if (res)
+		return;
 
 	hw_cr4 = (cr4_read_shadow() & X86_CR4_MCE) | (cr4 & ~X86_CR4_MCE);
 	if (is_unrestricted_guest(vcpu))

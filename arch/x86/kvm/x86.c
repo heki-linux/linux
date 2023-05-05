@@ -7927,10 +7927,76 @@ static unsigned long emulator_get_cr(struct x86_emulate_ctxt *ctxt, int cr)
 	return value;
 }
 
+#ifdef CONFIG_HEKI
+
+extern unsigned long cr4_pinned_mask;
+
+static int heki_lock_cr(struct kvm *const kvm, const unsigned long cr,
+			unsigned long pin)
+{
+	if (!pin)
+		return -KVM_EINVAL;
+
+	switch (cr) {
+	case 0:
+		/* Cf. arch/x86/kernel/cpu/common.c */
+		if (!(pin & X86_CR0_WP))
+			return -KVM_EINVAL;
+
+		if ((read_cr0() & pin) != pin)
+			return -KVM_EINVAL;
+
+		atomic_long_or(pin, &kvm->heki_pinned_cr0);
+		return 0;
+	case 4:
+		/* Checks for irrelevant bits. */
+		if ((pin & cr4_pinned_mask) != pin)
+			return -KVM_EINVAL;
+
+		/* Ignores bits not present in host. */
+		pin &= __read_cr4();
+		atomic_long_or(pin, &kvm->heki_pinned_cr4);
+		return 0;
+	}
+	return -KVM_EINVAL;
+}
+
+int heki_check_cr(const struct kvm *const kvm, const unsigned long cr,
+		  const unsigned long val)
+{
+	unsigned long pinned;
+
+	switch (cr) {
+	case 0:
+		pinned = atomic_long_read(&kvm->heki_pinned_cr0);
+		if ((val & pinned) != pinned) {
+			pr_warn_ratelimited(
+				"heki-kvm: Blocked CR0 update: 0x%lx\n", val);
+			return -KVM_EPERM;
+		}
+		return 0;
+	case 4:
+		pinned = atomic_long_read(&kvm->heki_pinned_cr4);
+		if ((val & pinned) != pinned) {
+			pr_warn_ratelimited(
+				"heki-kvm: Blocked CR4 update: 0x%lx\n", val);
+			return -KVM_EPERM;
+		}
+		return 0;
+	}
+	return 0;
+}
+
+#endif /* CONFIG_HEKI */
+
 static int emulator_set_cr(struct x86_emulate_ctxt *ctxt, int cr, ulong val)
 {
 	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
 	int res = 0;
+
+	res = heki_check_cr(vcpu->kvm, cr, val);
+	if (res)
+		return res;
 
 	switch (cr) {
 	case 0:
@@ -9857,6 +9923,12 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 			ret = -KVM_EINVAL;
 		else
 			ret = heki_lock_mem_page_ranges(vcpu->kvm, a0, a1);
+		break;
+	case KVM_HC_LOCK_CR_UPDATE:
+		if (a0 > U32_MAX)
+			ret = -KVM_EINVAL;
+		else
+			ret = heki_lock_cr(vcpu->kvm, a0, a1);
 		break;
 #endif /* CONFIG_HEKI */
 	default:
