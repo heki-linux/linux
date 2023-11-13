@@ -21,6 +21,16 @@ __init void heki_early_init(void)
 		pr_warn("Heki is not enabled\n");
 		return;
 	}
+
+	/*
+	 * Static addresses (see heki_arch_early_init) are not compatible with
+	 * KASLR. This will be handled in a next patch series.
+	 */
+	if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+		pr_warn("Heki is disabled because KASLR is not supported yet\n");
+		return;
+	}
+
 	pr_warn("Heki is enabled\n");
 
 	if (!heki.hypervisor) {
@@ -29,6 +39,9 @@ __init void heki_early_init(void)
 		return;
 	}
 	pr_warn("Heki is supported by the active Hypervisor\n");
+
+	heki_counters_init();
+	heki_arch_early_init();
 }
 
 /*
