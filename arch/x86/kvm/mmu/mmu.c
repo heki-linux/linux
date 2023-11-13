@@ -29,6 +29,9 @@
 #include "cpuid.h"
 #include "spte.h"
 
+/* Required by paging_tmpl.h for enable_mbec */
+#include "../vmx/capabilities.h"
+
 #include <linux/kvm_host.h>
 #include <linux/types.h>
 #include <linux/string.h>
@@ -3410,7 +3413,7 @@ static bool fast_pf_fix_direct_spte(struct kvm_vcpu *vcpu,
 static bool is_access_allowed(struct kvm_page_fault *fault, u64 spte)
 {
 	if (fault->exec)
-		return is_executable_pte(spte);
+		return is_executable_pte(spte, !fault->user);
 
 	if (fault->write)
 		return is_writable_pte(spte);
@@ -3852,7 +3855,8 @@ static int mmu_alloc_shadow_roots(struct kvm_vcpu *vcpu)
 	 */
 	pm_mask = PT_PRESENT_MASK | shadow_me_value;
 	if (mmu->root_role.level >= PT64_ROOT_4LEVEL) {
-		pm_mask |= PT_ACCESSED_MASK | PT_WRITABLE_MASK | PT_USER_MASK;
+		pm_mask |= PT_ACCESSED_MASK | PT_WRITABLE_MASK | PT_USER_MASK |
+			   PT_USER_EXEC_MASK;
 
 		if (WARN_ON_ONCE(!mmu->pml4_root)) {
 			r = -EIO;

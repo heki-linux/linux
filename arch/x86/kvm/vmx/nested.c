@@ -2324,6 +2324,9 @@ static void prepare_vmcs02_early(struct vcpu_vmx *vmx, struct loaded_vmcs *vmcs0
 		/* VMCS shadowing for L2 is emulated for now */
 		exec_control &= ~SECONDARY_EXEC_SHADOW_VMCS;
 
+		/* MBEC is currently only handled for L0. */
+		exec_control &= ~SECONDARY_EXEC_MODE_BASED_EPT_EXEC;
+
 		/*
 		 * Preset *DT exiting when emulating UMIP, so that vmx_set_cr4()
 		 * will not have to rewrite the controls just for this bit.
@@ -6863,6 +6866,10 @@ static void nested_vmx_setup_secondary_ctls(u32 ept_caps,
 {
 	msrs->secondary_ctls_low = 0;
 
+	/*
+	 * Currently, SECONDARY_EXEC_MODE_BASED_EPT_EXEC is only handled for
+	 * L0 and doesn't need to be exposed to L1 nor L2.
+	 */
 	msrs->secondary_ctls_high = vmcs_conf->cpu_based_2nd_exec_ctrl;
 	msrs->secondary_ctls_high &=
 		SECONDARY_EXEC_DESC |

@@ -510,8 +510,20 @@ error:
 		 * Note, pte_access holds the raw RWX bits from the EPTE, not
 		 * ACC_*_MASK flags!
 		 */
-		vcpu->arch.exit_qualification |= (pte_access & VMX_EPT_RWX_MASK) <<
-						 EPT_VIOLATION_RWX_SHIFT;
+		vcpu->arch.exit_qualification |=
+			!!(pte_access & VMX_EPT_READABLE_MASK)
+			<< EPT_VIOLATION_READ_BIT;
+		vcpu->arch.exit_qualification |=
+			!!(pte_access & VMX_EPT_WRITABLE_MASK)
+			<< EPT_VIOLATION_WRITE_BIT;
+		vcpu->arch.exit_qualification |=
+			!!(pte_access & VMX_EPT_EXECUTABLE_MASK)
+			<< EPT_VIOLATION_KERNEL_INSTR_BIT;
+		if (enable_mbec) {
+			vcpu->arch.exit_qualification |=
+				!!(pte_access & VMX_EPT_USER_EXECUTABLE_MASK)
+				<< EPT_VIOLATION_USER_INSTR_BIT;
+		}
 	}
 #endif
 	walker->fault.address = addr;

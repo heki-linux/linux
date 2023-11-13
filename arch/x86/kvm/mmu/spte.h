@@ -3,8 +3,11 @@
 #ifndef KVM_X86_MMU_SPTE_H
 #define KVM_X86_MMU_SPTE_H
 
+#include <asm/vmx.h>
+
 #include "mmu.h"
 #include "mmu_internal.h"
+#include "../vmx/vmx.h"
 
 /*
  * A MMU present SPTE is backed by actual memory and may or may not be present
@@ -320,9 +323,17 @@ static inline bool is_last_spte(u64 pte, int level)
 	return (level == PG_LEVEL_4K) || is_large_pte(pte);
 }
 
-static inline bool is_executable_pte(u64 spte)
+static inline bool is_executable_pte(u64 spte, bool for_kernel_mode)
 {
-	return (spte & (shadow_x_mask | shadow_nx_mask)) == shadow_x_mask;
+	u64 x_mask = shadow_x_mask;
+
+	if (enable_mbec) {
+		if (for_kernel_mode)
+			x_mask &= ~VMX_EPT_USER_EXECUTABLE_MASK;
+		else
+			x_mask &= ~VMX_EPT_EXECUTABLE_MASK;
+	}
+	return (spte & (x_mask | shadow_nx_mask)) == x_mask;
 }
 
 static inline kvm_pfn_t spte_to_pfn(u64 pte)

@@ -94,6 +94,10 @@ bool __read_mostly enable_unrestricted_guest = 1;
 module_param_named(unrestricted_guest,
 			enable_unrestricted_guest, bool, S_IRUGO);
 
+bool __read_mostly enable_mbec = true;
+EXPORT_SYMBOL_GPL(enable_mbec);
+module_param_named(mbec, enable_mbec, bool, 0444);
+
 bool __read_mostly enable_ept_ad_bits = 1;
 module_param_named(eptad, enable_ept_ad_bits, bool, S_IRUGO);
 
@@ -4596,10 +4600,21 @@ static u32 vmx_secondary_exec_control(struct vcpu_vmx *vmx)
 		exec_control &= ~SECONDARY_EXEC_ENABLE_VPID;
 	if (!enable_ept) {
 		exec_control &= ~SECONDARY_EXEC_ENABLE_EPT;
+		/*
+		 * From Intel's SDM:
+		 * If either the "unrestricted guest" VM-execution control or
+		 * the "mode-based execute control for EPT" VM-execution
+		 * control is 1, the "enable EPT" VM-execution control must
+		 * also be 1.
+		 */
 		enable_unrestricted_guest = 0;
+		enable_mbec = false;
 	}
 	if (!enable_unrestricted_guest)
 		exec_control &= ~SECONDARY_EXEC_UNRESTRICTED_GUEST;
+	if (!enable_mbec)
+		exec_control &= ~SECONDARY_EXEC_MODE_BASED_EPT_EXEC;
+
 	if (kvm_pause_in_guest(vmx->vcpu.kvm))
 		exec_control &= ~SECONDARY_EXEC_PAUSE_LOOP_EXITING;
 	if (!kvm_vcpu_apicv_active(vcpu))
@@ -5742,7 +5757,7 @@ static int handle_task_switch(struct kvm_vcpu *vcpu)
 
 static int handle_ept_violation(struct kvm_vcpu *vcpu)
 {
-	unsigned long exit_qualification;
+	unsigned long exit_qualification, rwx_mask;
 	gpa_t gpa;
 	u64 error_code;
 
@@ -5772,7 +5787,11 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	error_code |= (exit_qualification & EPT_VIOLATION_ACC_INSTR)
 		      ? PFERR_FETCH_MASK : 0;
 	/* ept page table entry is present? */
-	error_code |= (exit_qualification & EPT_VIOLATION_RWX_MASK)
+	rwx_mask = EPT_VIOLATION_READ | EPT_VIOLATION_WRITE |
+		   EPT_VIOLATION_KERNEL_INSTR;
+	if (enable_mbec)
+		rwx_mask |= EPT_VIOLATION_USER_INSTR;
+	error_code |= (exit_qualification & rwx_mask)
 		      ? PFERR_PRESENT_MASK : 0;
 
 	error_code |= (exit_qualification & EPT_VIOLATION_GVA_TRANSLATED) != 0 ?
@@ -8475,6 +8494,9 @@ static __init int hardware_setup(void)
 	if (!cpu_has_vmx_unrestricted_guest() || !enable_ept)
 		enable_unrestricted_guest = 0;
 
+	if (!cpu_has_vmx_mbec() || !enable_ept)
+		enable_mbec = false;
+
 	if (!cpu_has_vmx_flexpriority())
 		flexpriority_enabled = 0;
 
@@ -8533,7 +8555,8 @@ static __init int hardware_setup(void)
 
 	if (enable_ept)
 		kvm_mmu_set_ept_masks(enable_ept_ad_bits,
-				      cpu_has_vmx_ept_execute_only());
+				      cpu_has_vmx_ept_execute_only(),
+				      enable_mbec);
 
 	/*
 	 * Setup shadow_me_value/shadow_me_mask to include MKTME KeyID
