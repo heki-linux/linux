@@ -290,6 +290,26 @@ static inline bool kvm_check_has_quirk(struct kvm *kvm, u64 quirk)
 	return !(kvm->arch.disabled_quirks & quirk);
 }
 
+#ifdef CONFIG_HEKI
+
+int heki_check_cr(struct kvm_vcpu *vcpu, unsigned long cr, unsigned long val);
+
+#else /* CONFIG_HEKI */
+
+static inline int heki_check_cr(struct kvm_vcpu *vcpu, unsigned long cr,
+				unsigned long val)
+{
+	return 0;
+}
+
+static inline int heki_lock_cr(struct kvm_vcpu *const vcpu, unsigned long cr,
+			       unsigned long pin)
+{
+	return 0;
+}
+
+#endif /* CONFIG_HEKI */
+
 void kvm_inject_realmode_interrupt(struct kvm_vcpu *vcpu, int irq, int inc_eip);
 
 u64 get_kvmclock_ns(struct kvm *kvm);
@@ -324,6 +344,8 @@ fastpath_t handle_fastpath_set_msr_irqoff(struct kvm_vcpu *vcpu);
 extern u64 host_xcr0;
 extern u64 host_xss;
 extern u64 host_arch_capabilities;
+
+extern const unsigned long cr4_pinned_mask;
 
 extern struct kvm_caps kvm_caps;
 

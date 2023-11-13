@@ -8054,10 +8054,85 @@ static unsigned long emulator_get_cr(struct x86_emulate_ctxt *ctxt, int cr)
 	return value;
 }
 
+#ifdef CONFIG_HEKI
+
+#define HEKI_ABI_VERSION 1
+
+static int heki_lock_cr(struct kvm_vcpu *const vcpu, const unsigned long cr,
+			unsigned long pin, unsigned long flags)
+{
+	if (flags) {
+		if ((flags == KVM_LOCK_CR_UPDATE_VERSION) && !cr && !pin)
+			return HEKI_ABI_VERSION;
+		return -KVM_EINVAL;
+	}
+
+	if (!pin)
+		return -KVM_EINVAL;
+
+	switch (cr) {
+	case 0:
+		/* Cf. arch/x86/kernel/cpu/common.c */
+		if (!(pin & X86_CR0_WP))
+			return -KVM_EINVAL;
+
+		if ((pin & read_cr0()) != pin)
+			return -KVM_EINVAL;
+
+		atomic_long_or(pin, &vcpu->kvm->heki_pinned_cr0);
+		return 0;
+	case 4:
+		/* Checks for irrelevant bits. */
+		if ((pin & cr4_pinned_mask) != pin)
+			return -KVM_EINVAL;
+
+		/* Ignores bits not present in host. */
+		pin &= __read_cr4();
+		atomic_long_or(pin, &vcpu->kvm->heki_pinned_cr4);
+		return 0;
+	}
+	return -KVM_EINVAL;
+}
+
+int heki_check_cr(struct kvm_vcpu *const vcpu, const unsigned long cr,
+		  const unsigned long val)
+{
+	unsigned long pinned;
+
+	switch (cr) {
+	case 0:
+		pinned = atomic_long_read(&vcpu->kvm->heki_pinned_cr0);
+		if ((val & pinned) != pinned) {
+			pr_warn_ratelimited(
+				"heki: Blocked CR0 update: 0x%lx\n", val);
+			kvm_inject_gp(vcpu, 0);
+			return 1;
+		}
+		return 0;
+	case 4:
+		pinned = atomic_long_read(&vcpu->kvm->heki_pinned_cr4);
+		if ((val & pinned) != pinned) {
+			pr_warn_ratelimited(
+				"heki: Blocked CR4 update: 0x%lx\n", val);
+			kvm_inject_gp(vcpu, 0);
+			return 1;
+		}
+		return 0;
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(heki_check_cr);
+
+#endif /* CONFIG_HEKI */
+
 static int emulator_set_cr(struct x86_emulate_ctxt *ctxt, int cr, ulong val)
 {
 	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
 	int res = 0;
+
+	res = heki_check_cr(vcpu, cr, val);
+	if (res)
+		return res;
 
 	switch (cr) {
 	case 0:
@@ -9918,6 +9993,15 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		vcpu->arch.complete_userspace_io = complete_hypercall_exit;
 		return 0;
 	}
+#ifdef CONFIG_HEKI
+	case KVM_HC_LOCK_CR_UPDATE:
+		if (a0 > U32_MAX) {
+			ret = -KVM_EINVAL;
+		} else {
+			ret = heki_lock_cr(vcpu, a0, a1, a2);
+		}
+		break;
+#endif /* CONFIG_HEKI */
 	default:
 		ret = -KVM_ENOSYS;
 		break;

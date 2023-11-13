@@ -835,6 +835,11 @@ struct kvm {
 	bool vm_bugged;
 	bool vm_dead;
 
+#ifdef CONFIG_HEKI
+	atomic_long_t heki_pinned_cr0;
+	atomic_long_t heki_pinned_cr4;
+#endif /* CONFIG_HEKI */
+
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
 	struct notifier_block pm_notifier;
 #endif

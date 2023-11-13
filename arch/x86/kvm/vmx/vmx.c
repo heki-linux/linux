@@ -5452,6 +5452,11 @@ static int handle_cr(struct kvm_vcpu *vcpu)
 	case 0: /* mov to cr */
 		val = kvm_register_read(vcpu, reg);
 		trace_kvm_cr_write(cr, val);
+
+		ret = heki_check_cr(vcpu, cr, val);
+		if (ret)
+			return ret;
+
 		switch (cr) {
 		case 0:
 			err = handle_set_cr0(vcpu, val);
