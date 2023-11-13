@@ -207,3 +207,17 @@ The hypercall lets a guest request control register flags to be pinned for
 itself.
 
 Returns 0 on success or a KVM error code otherwise.
+
+10. KVM_HC_PROTECT_MEMORY
+-------------------------
+
+:Architecture: x86
+:Status: active
+:Purpose: Request permissions to be set in EPT
+
+- a0: physical address of a struct heki_page_list
+
+The hypercall lets a guest request memory permissions to be set for a list
+of physical pages.
+
+Returns 0 on success or a KVM error code otherwise.

@@ -47,9 +47,11 @@
 #include <linux/sched/signal.h>
 #include <linux/uaccess.h>
 #include <linux/hash.h>
+#include <linux/heki.h>
 #include <linux/kern_levels.h>
 #include <linux/kstrtox.h>
 #include <linux/kthread.h>
+#include <linux/kvm_mem_attr.h>
 
 #include <asm/page.h>
 #include <asm/memtype.h>
@@ -4446,6 +4448,75 @@ static bool is_page_fault_stale(struct kvm_vcpu *vcpu,
 	       mmu_invalidate_retry_gfn(vcpu->kvm, fault->mmu_seq, fault->gfn);
 }
 
+static bool mem_attr_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
+{
+	unsigned long perm;
+	bool noexec, nowrite;
+
+	if (unlikely(fault->rsvd))
+		return false;
+
+	if (!fault->present)
+		return false;
+
+	perm = kvm_permissions_get(vcpu->kvm, fault->gfn);
+	noexec = !(perm & MEM_ATTR_EXEC);
+	nowrite = !(perm & MEM_ATTR_WRITE);
+
+	if (fault->exec && noexec) {
+		struct x86_exception exception = {
+			.vector = PF_VECTOR,
+			.error_code_valid = true,
+			.error_code = fault->error_code,
+			.nested_page_fault = false,
+			/*
+			 * TODO: This kind of kernel page fault needs to be
+			 * handled by the guest, which is not currently the
+			 * case, making it try again and again.
+			 *
+			 * You may want to test with cr2_or_gva to see the page
+			 * fault caught by the guest kernel (thinking it is a
+			 * user space fault).
+			 */
+			.address = static_call(kvm_x86_fault_gva)(vcpu),
+			.async_page_fault = false,
+		};
+
+		pr_warn_ratelimited(
+			"heki: Creating fetch #PF at 0x%016llx GFN=%llx\n",
+			exception.address, fault->gfn);
+		kvm_inject_page_fault(vcpu, &exception);
+		return true;
+	}
+
+	if (fault->write && nowrite) {
+		struct x86_exception exception = {
+			.vector = PF_VECTOR,
+			.error_code_valid = true,
+			.error_code = fault->error_code,
+			.nested_page_fault = false,
+			/*
+			 * TODO: This kind of kernel page fault needs to be
+			 * handled by the guest, which is not currently the
+			 * case, making it try again and again.
+			 *
+			 * You may want to test with cr2_or_gva to see the page
+			 * fault caught by the guest kernel (thinking it is a
+			 * user space fault).
+			 */
+			.address = static_call(kvm_x86_fault_gva)(vcpu),
+			.async_page_fault = false,
+		};
+
+		pr_warn_ratelimited(
+			"heki: Creating write #PF at 0x%016llx GFN=%llx\n",
+			exception.address, fault->gfn);
+		kvm_inject_page_fault(vcpu, &exception);
+		return true;
+	}
+	return false;
+}
+
 static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	int r;
@@ -4456,6 +4527,9 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 
 	if (page_fault_handle_page_track(vcpu, fault))
 		return RET_PF_EMULATE;
+
+	if (mem_attr_fault(vcpu, fault))
+		return RET_PF_RETRY;
 
 	r = fast_page_fault(vcpu, fault);
 	if (r != RET_PF_INVALID)
@@ -4536,6 +4610,9 @@ static int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu,
 
 	if (page_fault_handle_page_track(vcpu, fault))
 		return RET_PF_EMULATE;
+
+	if (mem_attr_fault(vcpu, fault))
+		return RET_PF_RETRY;
 
 	r = fast_page_fault(vcpu, fault);
 	if (r != RET_PF_INVALID)

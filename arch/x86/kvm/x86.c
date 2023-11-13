@@ -62,6 +62,8 @@
 #include <linux/entry-kvm.h>
 #include <linux/suspend.h>
 #include <linux/smp.h>
+#include <linux/heki.h>
+#include <linux/kvm_mem_attr.h>
 
 #include <trace/events/ipi.h>
 #include <trace/events/kvm.h>
@@ -9983,6 +9985,131 @@ no_yield:
 	return;
 }
 
+#ifdef CONFIG_HEKI
+
+static int heki_protect_memory(struct kvm *const kvm, gpa_t list_pa)
+{
+	struct heki_page_list *list, *head;
+	struct heki_pages *pages;
+	size_t size;
+	int i, npages, err = 0;
+
+	/* Read in the page list. */
+	head = NULL;
+	npages = 0;
+	while (list_pa) {
+		list = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		if (!list) {
+			/* For want of a better error number. */
+			err = -KVM_E2BIG;
+			goto free;
+		}
+
+		err = kvm_read_guest(kvm, list_pa, list, sizeof(*list));
+		if (err) {
+			pr_warn("heki: Can't read list %llx\n", list_pa);
+			err = -KVM_EFAULT;
+			goto free;
+		}
+		list_pa += sizeof(*list);
+
+		size = list->npages * sizeof(*pages);
+		pages = list->pages;
+		err = kvm_read_guest(kvm, list_pa, pages, size);
+		if (err) {
+			pr_warn("heki: Can't read pages %llx\n", list_pa);
+			err = -KVM_EFAULT;
+			goto free;
+		}
+
+		list->next = head;
+		head = list;
+		npages += list->npages;
+		list_pa = list->next_pa;
+	}
+
+	/* For kvm_permissions_set() -> kvm_vm_set_mem_attributes() */
+	mutex_lock(&kvm->slots_arch_lock);
+
+	/*
+	 * Walk the page list, apply the permissions for each guest page and
+	 * zap the EPT entry of each page. The pages will be faulted in on
+	 * demand and the correct permissions will be applied at the correct
+	 * level for the pages.
+	 */
+	for (list = head; list; list = list->next) {
+		pages = list->pages;
+
+		for (i = 0; i < list->npages; i++) {
+			gfn_t gfn_start, gfn_end;
+			unsigned long permissions;
+
+			if (!PAGE_ALIGNED(pages[i].pa)) {
+				pr_warn("heki: GPA not aligned: %llx\n",
+					pages[i].pa);
+				err = -KVM_EINVAL;
+				goto unlock;
+			}
+			if (!PAGE_ALIGNED(pages[i].epa)) {
+				pr_warn("heki: GPA not aligned: %llx\n",
+					pages[i].epa);
+				err = -KVM_EINVAL;
+				goto unlock;
+			}
+
+			gfn_start = gpa_to_gfn(pages[i].pa);
+			gfn_end = gpa_to_gfn(pages[i].epa);
+			permissions = pages[i].permissions;
+
+			if (!permissions || (permissions & ~MEM_ATTR_PROT)) {
+				err = -KVM_EINVAL;
+				goto unlock;
+			}
+
+			if (!(permissions & MEM_ATTR_EXEC) && !enable_mbec) {
+				/*
+				 * Guests can check for MBEC support to avoid
+				 * this error message. We will continue
+				 * applying restrictions partially.
+				 */
+				pr_warn("heki: Clearing kernel exec "
+					"depends on MBEC, which is disabled.");
+				permissions |= MEM_ATTR_EXEC;
+			}
+
+			pr_warn("heki: Request to protect GFNs %llx-%llx"
+				" with %s permissions=%s%s%s\n",
+				gfn_start, gfn_end,
+				(permissions & MEM_ATTR_IMMUTABLE) ?
+					"immutable" :
+					"mutable",
+				(permissions & MEM_ATTR_READ) ? "r" : "_",
+				(permissions & MEM_ATTR_WRITE) ? "w" : "_",
+				(permissions & MEM_ATTR_EXEC) ? "x" : "_");
+
+			err = kvm_permissions_set(kvm, gfn_start, gfn_end,
+						  permissions);
+			if (err) {
+				pr_warn("heki: Failed to set permissions\n");
+				goto unlock;
+			}
+		}
+	}
+
+unlock:
+	mutex_unlock(&kvm->slots_arch_lock);
+
+free:
+	while (head) {
+		list = head;
+		head = head->next;
+		kfree(list);
+	}
+	return err;
+}
+
+#endif /* CONFIG_HEKI */
+
 static int complete_hypercall_exit(struct kvm_vcpu *vcpu)
 {
 	u64 ret = vcpu->run->hypercall.ret;
@@ -10096,6 +10223,9 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 			if (exit)
 				return ret;
 		}
+		break;
+	case KVM_HC_PROTECT_MEMORY:
+		ret = heki_protect_memory(vcpu->kvm, a0);
 		break;
 #endif /* CONFIG_HEKI */
 	default:

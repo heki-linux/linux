@@ -31,6 +31,7 @@
 #define KVM_HC_SCHED_YIELD		11
 #define KVM_HC_MAP_GPA_RANGE		12
 #define KVM_HC_LOCK_CR_UPDATE		13
+#define KVM_HC_PROTECT_MEMORY		14
 
 /*
  * hypercalls use architecture specific

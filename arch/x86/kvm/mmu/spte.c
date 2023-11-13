@@ -10,6 +10,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/kvm_host.h>
+#include <linux/kvm_mem_attr.h>
 #include "mmu.h"
 #include "mmu_internal.h"
 #include "x86.h"
@@ -143,6 +144,11 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	int level = sp->role.level;
 	u64 spte = SPTE_MMU_PRESENT_MASK;
 	bool wrprot = false;
+	unsigned long perm;
+
+	perm = kvm_permissions_get(vcpu->kvm, gfn);
+	if (!(perm & MEM_ATTR_WRITE))
+		pte_access &= ~ACC_WRITE_MASK;
 
 	WARN_ON_ONCE(!pte_access && !shadow_present_mask);
 
@@ -178,10 +184,15 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 		pte_access &= ~ACC_EXEC_MASK;
 	}
 
-	if (pte_access & ACC_EXEC_MASK)
+	if (pte_access & ACC_EXEC_MASK) {
 		spte |= shadow_x_mask;
-	else
+#ifdef CONFIG_HEKI
+		if (enable_mbec && !(perm & MEM_ATTR_EXEC))
+			spte &= ~VMX_EPT_EXECUTABLE_MASK;
+#endif
+	} else {
 		spte |= shadow_nx_mask;
+	}
 
 	if (pte_access & ACC_USER_MASK)
 		spte |= shadow_user_mask;

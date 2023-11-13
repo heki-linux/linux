@@ -820,6 +820,9 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 		return RET_PF_EMULATE;
 	}
 
+	if (mem_attr_fault(vcpu, fault))
+		return RET_PF_RETRY;
+
 	r = mmu_topup_memory_caches(vcpu, true);
 	if (r)
 		return r;
