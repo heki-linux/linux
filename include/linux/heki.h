@@ -111,6 +111,7 @@ typedef void (*heki_func_t)(struct heki_args *args);
 
 extern struct heki heki;
 extern bool heki_enabled;
+extern struct mutex heki_lock;
 
 extern bool __read_mostly enable_mbec;
 
@@ -123,12 +124,15 @@ void heki_map(unsigned long va, unsigned long end);
 void heki_update(unsigned long va, unsigned long end, unsigned long set,
 		 unsigned long clear);
 void heki_unmap(unsigned long va, unsigned long end);
+void heki_callback(struct heki_args *args);
 
 /* Arch-specific functions. */
 void heki_arch_early_init(void);
 unsigned long heki_flags_to_permissions(unsigned long flags);
 void heki_pgprot_to_permissions(pgprot_t prot, unsigned long *set,
 				unsigned long *clear);
+void heki_text_poke_start(struct page **pages, int npages, pgprot_t prot);
+void heki_text_poke_end(struct page **pages, int npages, pgprot_t prot);
 
 #else /* !CONFIG_HEKI */
 
@@ -146,6 +150,16 @@ static inline void heki_update(unsigned long va, unsigned long end,
 {
 }
 static inline void heki_unmap(unsigned long va, unsigned long end)
+{
+}
+
+/* Arch-specific functions. */
+static inline void heki_text_poke_start(struct page **pages, int npages,
+					pgprot_t prot)
+{
+}
+static inline void heki_text_poke_end(struct page **pages, int npages,
+				      pgprot_t prot)
 {
 }
 

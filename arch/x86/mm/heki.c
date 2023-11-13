@@ -5,8 +5,11 @@
  * Copyright © 2023 Microsoft Corporation
  */
 
+#include <asm/pgtable.h>
+#include <asm/text-patching.h>
 #include <linux/heki.h>
 #include <linux/kvm_mem_attr.h>
+#include <linux/mm.h>
 
 #ifdef pr_fmt
 #undef pr_fmt
@@ -62,4 +65,50 @@ void heki_pgprot_to_permissions(pgprot_t prot, unsigned long *set,
 		*set |= MEM_ATTR_WRITE;
 	if (pgprot_val(prot) & _PAGE_NX)
 		*clear |= MEM_ATTR_EXEC;
+}
+
+static unsigned long heki_pgprot_to_flags(pgprot_t prot)
+{
+	unsigned long flags = 0;
+
+	if (pgprot_val(prot) & _PAGE_RW)
+		flags |= _PAGE_RW;
+	if (pgprot_val(prot) & _PAGE_NX)
+		flags |= _PAGE_NX;
+	return flags;
+}
+
+static void heki_text_poke_common(struct page **pages, int npages,
+				  pgprot_t prot, enum heki_cmd cmd)
+{
+	struct heki_args args = {
+		.cmd = cmd,
+	};
+	unsigned long va = poking_addr;
+	int i;
+
+	if (!heki.counters)
+		return;
+
+	mutex_lock(&heki_lock);
+
+	for (i = 0; i < npages; i++, va += PAGE_SIZE) {
+		args.va = va;
+		args.pa = page_to_pfn(pages[i]) << PAGE_SHIFT;
+		args.size = PAGE_SIZE;
+		args.flags = heki_pgprot_to_flags(prot);
+		heki_callback(&args);
+	}
+
+	mutex_unlock(&heki_lock);
+}
+
+void heki_text_poke_start(struct page **pages, int npages, pgprot_t prot)
+{
+	heki_text_poke_common(pages, npages, prot, HEKI_MAP);
+}
+
+void heki_text_poke_end(struct page **pages, int npages, pgprot_t prot)
+{
+	heki_text_poke_common(pages, npages, prot, HEKI_UNMAP);
 }

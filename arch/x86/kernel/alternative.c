@@ -18,6 +18,7 @@
 #include <linux/mmu_context.h>
 #include <linux/bsearch.h>
 #include <linux/sync_core.h>
+#include <linux/heki.h>
 #include <asm/text-patching.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
@@ -1801,6 +1802,7 @@ static void *__text_poke(text_poke_f func, void *addr, const void *src, size_t l
 	 */
 	pgprot = __pgprot(pgprot_val(PAGE_KERNEL) & ~_PAGE_GLOBAL);
 
+	heki_text_poke_start(pages, cross_page_boundary ? 2 : 1, pgprot);
 	/*
 	 * The lock is not really needed, but this allows to avoid open-coding.
 	 */
@@ -1865,7 +1867,10 @@ static void *__text_poke(text_poke_f func, void *addr, const void *src, size_t l
 	}
 
 	local_irq_restore(flags);
+
 	pte_unmap_unlock(ptep, ptl);
+	heki_text_poke_end(pages, cross_page_boundary ? 2 : 1, pgprot);
+
 	return addr;
 }
 
