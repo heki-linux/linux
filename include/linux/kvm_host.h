@@ -2397,7 +2397,7 @@ bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
 bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 					 struct kvm_gfn_range *range);
 int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
-			      unsigned long attributes);
+			      unsigned long attributes, unsigned long mask);
 
 static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 {

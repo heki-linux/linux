@@ -2436,7 +2436,7 @@ static int kvm_vm_ioctl_clear_dirty_log(struct kvm *kvm,
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 /*
  * Returns true if _all_ gfns in the range [@start, @end) have attributes
- * matching @attrs.
+ * matching the @attrs bitmask.
  */
 bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 				     unsigned long attrs)
@@ -2459,7 +2459,8 @@ bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 			entry = xas_next(&xas);
 		} while (xas_retry(&xas, entry));
 
-		if (xas.xa_index != index || xa_to_value(entry) != attrs) {
+		if (xas.xa_index != index ||
+		    (xa_to_value(entry) & attrs) != attrs) {
 			has_attrs = false;
 			break;
 		}
@@ -2553,7 +2554,7 @@ static bool kvm_pre_set_memory_attributes(struct kvm *kvm,
 
 /* Set @attributes for the gfn range [@start, @end). */
 int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
-				     unsigned long attributes)
+			      unsigned long attributes, unsigned long mask)
 {
 	struct kvm_mmu_notifier_range pre_set_range = {
 		.start = start,
@@ -2572,10 +2573,7 @@ int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 		.may_block = true,
 	};
 	unsigned long i;
-	void *entry;
 	int r = 0;
-
-	entry = attributes ? xa_mk_value(attributes) : NULL;
 
 	lockdep_assert_held(&kvm->slots_arch_lock);
 
@@ -2596,6 +2594,16 @@ int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	kvm_handle_gfn_range(kvm, &pre_set_range);
 
 	for (i = start; i < end; i++) {
+		unsigned long value = 0;
+		void *entry;
+
+		entry = xa_load(&kvm->mem_attr_array, i);
+		if (xa_is_value(entry))
+			value = xa_to_value(entry) & ~mask;
+
+		value |= attributes & mask;
+		entry = value ? xa_mk_value(value) : NULL;
+
 		r = xa_err(xa_store(&kvm->mem_attr_array, i, entry,
 				    GFP_KERNEL_ACCOUNT));
 		KVM_BUG_ON(r, kvm);
@@ -2609,12 +2617,14 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 					   struct kvm_memory_attributes *attrs)
 {
 	int r;
+	unsigned long attrs_mask;
 	gfn_t start, end;
 
 	/* flags is currently not used. */
 	if (attrs->flags)
 		return -EINVAL;
-	if (attrs->attributes & ~kvm_supported_mem_attributes(kvm))
+	attrs_mask = kvm_supported_mem_attributes(kvm);
+	if (attrs->attributes & ~attrs_mask)
 		return -EINVAL;
 	if (attrs->size == 0 || attrs->address + attrs->size < attrs->address)
 		return -EINVAL;
@@ -2632,7 +2642,8 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 	BUILD_BUG_ON(sizeof(attrs->attributes) != sizeof(unsigned long));
 
 	mutex_lock(&kvm->slots_arch_lock);
-	r = kvm_vm_set_mem_attributes(kvm, start, end, attrs->attributes);
+	r = kvm_vm_set_mem_attributes(kvm, start, end, attrs->attributes,
+				      attrs_mask);
 	mutex_unlock(&kvm->slots_arch_lock);
 	return r;
 }
