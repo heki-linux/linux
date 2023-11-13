@@ -25,6 +25,7 @@
 #include <linux/static_call.h>
 #include <linux/swiotlb.h>
 #include <linux/random.h>
+#include <linux/mem_table.h>
 
 #include <uapi/linux/mount.h>
 
@@ -1315,6 +1316,7 @@ void __init setup_arch(char **cmdline_p)
 #endif
 
 	unwind_init();
+	mem_table_init(PG_LEVEL_4K);
 }
 
 #ifdef CONFIG_X86_32

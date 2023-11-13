@@ -15,6 +15,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/printk.h>
+#include <linux/slab.h>
 
 #ifdef CONFIG_HEKI
 
