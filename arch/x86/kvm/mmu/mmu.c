@@ -4478,7 +4478,8 @@ static bool mem_attr_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 			 * fault caught by the guest kernel (thinking it is a
 			 * user space fault).
 			 */
-			.address = static_call(kvm_x86_fault_gva)(vcpu),
+			// XXX: .address = static_call(kvm_x86_fault_gva)(vcpu),
+			.address = gfn_to_gpa(fault->gfn),
 			.async_page_fault = false,
 		};
 
@@ -4504,7 +4505,8 @@ static bool mem_attr_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 			 * fault caught by the guest kernel (thinking it is a
 			 * user space fault).
 			 */
-			.address = static_call(kvm_x86_fault_gva)(vcpu),
+			// XXX: .address = static_call(kvm_x86_fault_gva)(vcpu),
+			.address = gfn_to_gpa(fault->gfn),
 			.async_page_fault = false,
 		};
 
