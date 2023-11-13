@@ -2319,6 +2319,11 @@ struct kvm_memory_attributes {
 
 #define KVM_MEMORY_ATTRIBUTE_PRIVATE           (1ULL << 3)
 
+#define KVM_MEMORY_ATTRIBUTE_HEKI_READ         (1ULL << 4)
+#define KVM_MEMORY_ATTRIBUTE_HEKI_WRITE        (1ULL << 5)
+#define KVM_MEMORY_ATTRIBUTE_HEKI_EXEC         (1ULL << 6)
+#define KVM_MEMORY_ATTRIBUTE_HEKI_IMMUTABLE    (1ULL << 7)
+
 #define KVM_CREATE_GUEST_MEMFD	_IOWR(KVMIO,  0xd4, struct kvm_create_guest_memfd)
 
 struct kvm_create_guest_memfd {

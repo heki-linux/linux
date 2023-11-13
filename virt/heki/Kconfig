@@ -5,6 +5,7 @@
 config HEKI
 	bool "Hypervisor Enforced Kernel Integrity (Heki)"
 	depends on ARCH_SUPPORTS_HEKI && HYPERVISOR_SUPPORTS_HEKI
+	select KVM_GENERIC_MEMORY_ATTRIBUTES
 	help
 	  This feature enhances guest virtual machine security by taking
 	  advantage of security features provided by the hypervisor for guests.
