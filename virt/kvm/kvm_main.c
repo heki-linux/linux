@@ -2435,11 +2435,11 @@ static int kvm_vm_ioctl_clear_dirty_log(struct kvm *kvm,
 
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 /*
- * Returns true if _all_ gfns in the range [@start, @end) have attributes
- * matching the @attrs bitmask.
+ * According to @match_all, returns true if _all_ (respectively _any_) gfns in
+ * the range [@start, @end) have attributes matching the @attrs bitmask.
  */
 bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
-				     unsigned long attrs)
+				     unsigned long attrs, bool match_all)
 {
 	XA_STATE(xas, &kvm->mem_attr_array, start);
 	unsigned long index;
@@ -2453,16 +2453,25 @@ bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 		goto out;
 	}
 
-	has_attrs = true;
+	has_attrs = match_all;
 	for (index = start; index < end; index++) {
 		do {
 			entry = xas_next(&xas);
 		} while (xas_retry(&xas, entry));
 
-		if (xas.xa_index != index ||
-		    (xa_to_value(entry) & attrs) != attrs) {
-			has_attrs = false;
-			break;
+		if (match_all) {
+			if (xas.xa_index != index ||
+			    (xa_to_value(entry) & attrs) != attrs) {
+				has_attrs = false;
+				break;
+			}
+		} else {
+			index = xas.xa_index;
+			if (index < end &&
+			    (xa_to_value(entry) & attrs) == attrs) {
+				has_attrs = true;
+				break;
+			}
 		}
 	}
 
@@ -2578,7 +2587,7 @@ int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	lockdep_assert_held(&kvm->slots_arch_lock);
 
 	/* Nothing to do if the entire range as the desired attributes. */
-	if (kvm_range_has_memory_attributes(kvm, start, end, attributes))
+	if (kvm_range_has_memory_attributes(kvm, start, end, attributes, true))
 		return r;
 
 	/*
