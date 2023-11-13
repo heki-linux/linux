@@ -28,3 +28,15 @@ config HYPERVISOR_SUPPORTS_HEKI
 	  A hypervisor should select this when it can successfully build
 	  and run with CONFIG_HEKI. That is, it should provide all of the
 	  hypervisor support required for the Heki feature.
+
+config HEKI_TEST
+	bool "Tests for Heki" if !KUNIT_ALL_TESTS
+	depends on HEKI && KUNIT=y
+	default KUNIT_ALL_TESTS
+	help
+	  Run Heki tests at runtime according to the heki_test=N boot
+	  parameter, with N identifying the test to run (between 1 and 4).
+
+	  Before launching the init process, the system might not respond
+	  because of unhandled kernel page fault.  This will be fixed in a
+	  next patch series.

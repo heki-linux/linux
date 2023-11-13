@@ -149,6 +149,7 @@ void heki_protect(unsigned long va, unsigned long end);
 void heki_add_pa(struct heki_args *args, phys_addr_t pa,
 		 unsigned long permissions);
 void heki_apply_permissions(struct heki_args *args);
+void heki_run_test(void);
 
 /* Arch-specific functions. */
 void heki_arch_early_init(void);

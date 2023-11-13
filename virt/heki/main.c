@@ -51,8 +51,10 @@ void heki_late_init(void)
 {
 	struct heki_hypervisor *hypervisor = heki.hypervisor;
 
-	if (!heki.counters)
+	if (!heki.counters) {
+		heki_run_test();
 		return;
+	}
 
 	/* Locks control registers so a compromised guest cannot change them. */
 	if (WARN_ON(hypervisor->lock_crs()))
@@ -61,6 +63,8 @@ void heki_late_init(void)
 	pr_warn("Control registers locked\n");
 
 	heki_arch_late_init();
+
+	heki_run_test();
 }
 
 /*
