@@ -15,6 +15,8 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/printk.h>
+#include <linux/mm.h>
+#include <linux/memblock.h>
 #include <linux/slab.h>
 
 #ifdef CONFIG_HEKI
@@ -61,6 +63,7 @@ struct heki_page_list {
  */
 struct heki_hypervisor {
 	int (*lock_crs)(void); /* Lock control registers. */
+	int (*protect_memory)(gpa_t pa); /* Protect guest memory */
 };
 
 /*
@@ -74,16 +77,28 @@ struct heki_hypervisor {
  *	- a page is mapped into the kernel address space
  *	- a page is unmapped from the kernel address space
  *	- permissions are changed for a mapped page
+ *
+ * At the end of kernel boot (before kicking off the init process), the
+ * permissions for guest pages are applied to the host page table.
+ *
+ * Beyond that point, the counters and host page table permissions are updated
+ * whenever:
+ *
+ *	- a guest page is mapped into the kernel address space
+ *	- a guest page is unmapped from the kernel address space
+ *	- permissions are changed for a mapped guest page
  */
 struct heki {
 	struct heki_hypervisor *hypervisor;
 	struct mem_table *counters;
+	bool protect_memory;
 };
 
 enum heki_cmd {
 	HEKI_MAP,
 	HEKI_UPDATE,
 	HEKI_UNMAP,
+	HEKI_PROTECT_MEMORY,
 };
 
 /*
@@ -103,7 +118,12 @@ struct heki_args {
 
 	/* Permissions passed by heki_update(). */
 	unsigned long set;
+	unsigned long set_global;
 	unsigned long clear;
+
+	/* Page list is built by the callback. */
+	struct heki_page_list *head;
+	phys_addr_t head_pa;
 };
 
 /* Callback function called by the table walker. */
@@ -125,14 +145,20 @@ void heki_update(unsigned long va, unsigned long end, unsigned long set,
 		 unsigned long clear);
 void heki_unmap(unsigned long va, unsigned long end);
 void heki_callback(struct heki_args *args);
+void heki_protect(unsigned long va, unsigned long end);
+void heki_add_pa(struct heki_args *args, phys_addr_t pa,
+		 unsigned long permissions);
+void heki_apply_permissions(struct heki_args *args);
 
 /* Arch-specific functions. */
 void heki_arch_early_init(void);
+void heki_arch_late_init(void);
 unsigned long heki_flags_to_permissions(unsigned long flags);
 void heki_pgprot_to_permissions(pgprot_t prot, unsigned long *set,
 				unsigned long *clear);
 void heki_text_poke_start(struct page **pages, int npages, pgprot_t prot);
 void heki_text_poke_end(struct page **pages, int npages, pgprot_t prot);
+unsigned long heki_default_permissions(void);
 
 #else /* !CONFIG_HEKI */
 

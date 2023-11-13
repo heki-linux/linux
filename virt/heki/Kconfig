@@ -8,6 +8,7 @@ config HEKI
 	select KVM_GENERIC_MEMORY_ATTRIBUTES
 	depends on !X86_16BIT
 	select SPARSEMEM
+	depends on !JUMP_LABEL
 	help
 	  This feature enhances guest virtual machine security by taking
 	  advantage of security features provided by the hypervisor for guests.

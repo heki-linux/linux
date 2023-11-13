@@ -45,6 +45,19 @@ __init void heki_arch_early_init(void)
 	heki_map(direct_map_end, kernel_end);
 }
 
+void heki_arch_late_init(void)
+{
+	/*
+	 * The permission counters for all existing kernel mappings have
+	 * already been updated. Now, walk all the pages, compute their
+	 * permissions from the counters and apply the permissions in the
+	 * host page table. To accomplish this, we walk the direct map
+	 * range.
+	 */
+	heki_protect(direct_map_va, direct_map_end);
+	pr_warn("Guest memory protected\n");
+}
+
 unsigned long heki_flags_to_permissions(unsigned long flags)
 {
 	unsigned long permissions;
@@ -65,6 +78,11 @@ void heki_pgprot_to_permissions(pgprot_t prot, unsigned long *set,
 		*set |= MEM_ATTR_WRITE;
 	if (pgprot_val(prot) & _PAGE_NX)
 		*clear |= MEM_ATTR_EXEC;
+}
+
+unsigned long heki_default_permissions(void)
+{
+	return MEM_ATTR_READ | MEM_ATTR_WRITE;
 }
 
 static unsigned long heki_pgprot_to_flags(pgprot_t prot)
@@ -99,6 +117,9 @@ static void heki_text_poke_common(struct page **pages, int npages,
 		args.flags = heki_pgprot_to_flags(prot);
 		heki_callback(&args);
 	}
+
+	if (args.head)
+		heki_apply_permissions(&args);
 
 	mutex_unlock(&heki_lock);
 }

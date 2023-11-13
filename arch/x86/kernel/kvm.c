@@ -1021,8 +1021,19 @@ static int kvm_lock_crs(void)
 	return err;
 }
 
+static int kvm_protect_memory(gpa_t pa)
+{
+	long err;
+
+	WARN_ON_ONCE(in_interrupt());
+
+	err = kvm_hypercall1(KVM_HC_PROTECT_MEMORY, pa);
+	return err;
+}
+
 static struct heki_hypervisor kvm_heki_hypervisor = {
 	.lock_crs = kvm_lock_crs,
+	.protect_memory = kvm_protect_memory,
 };
 
 static void kvm_init_heki(void)

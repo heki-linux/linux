@@ -7374,7 +7374,7 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 	int level;
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
-	lockdep_assert_held(&kvm->slots_lock);
+	lockdep_assert_held(&kvm->slots_arch_lock);
 
 	/*
 	 * The sequence matters here: upper levels consume the result of lower
