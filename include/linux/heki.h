@@ -68,7 +68,11 @@ struct heki_hypervisor {
  * pointer into this heki structure.
  *
  * During guest kernel boot, permissions counters for each guest page are
- * initialized based on the page's current permissions.
+ * initialized based on the page's current permissions. Beyond this point,
+ * the counters are updated whenever:
+ *
+ *	- a page is mapped into the kernel address space
+ *	- a page is unmapped from the kernel address space
  */
 struct heki {
 	struct heki_hypervisor *hypervisor;
@@ -77,6 +81,7 @@ struct heki {
 
 enum heki_cmd {
 	HEKI_MAP,
+	HEKI_UNMAP,
 };
 
 /*
@@ -109,6 +114,7 @@ void heki_counters_init(void);
 void heki_walk(unsigned long va, unsigned long va_end, heki_func_t func,
 	       struct heki_args *args);
 void heki_map(unsigned long va, unsigned long end);
+void heki_unmap(unsigned long va, unsigned long end);
 
 /* Arch-specific functions. */
 void heki_arch_early_init(void);
@@ -123,6 +129,9 @@ static inline void heki_late_init(void)
 {
 }
 static inline void heki_map(unsigned long va, unsigned long end)
+{
+}
+static inline void heki_unmap(unsigned long va, unsigned long end)
 {
 }
 

@@ -40,6 +40,7 @@
 #include <linux/pgtable.h>
 #include <linux/hugetlb.h>
 #include <linux/sched/mm.h>
+#include <linux/heki.h>
 #include <asm/tlbflush.h>
 #include <asm/shmparam.h>
 
@@ -301,6 +302,8 @@ static int vmap_range_noflush(unsigned long addr, unsigned long end,
 	if (mask & ARCH_PAGE_TABLE_SYNC_MASK)
 		arch_sync_kernel_mappings(start, end);
 
+	heki_map(start, end);
+
 	return err;
 }
 
@@ -419,6 +422,8 @@ void __vunmap_range_noflush(unsigned long start, unsigned long end)
 	pgtbl_mod_mask mask = 0;
 
 	BUG_ON(addr >= end);
+	heki_unmap(start, end);
+
 	pgd = pgd_offset_k(addr);
 	do {
 		next = pgd_addr_end(addr, end);
@@ -563,6 +568,8 @@ static int vmap_small_pages_range_noflush(unsigned long addr, unsigned long end,
 
 	if (mask & ARCH_PAGE_TABLE_SYNC_MASK)
 		arch_sync_kernel_mappings(start, end);
+
+	heki_map(start, end);
 
 	return 0;
 }

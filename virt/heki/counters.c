@@ -88,6 +88,13 @@ void heki_callback(struct heki_args *args)
 			heki_update_counters(counters, 0, permissions, 0);
 			break;
 
+		case HEKI_UNMAP:
+			if (WARN_ON_ONCE(!counters))
+				break;
+			heki_update_counters(counters, permissions, 0,
+					     permissions);
+			break;
+
 		default:
 			WARN_ON_ONCE(1);
 			break;
@@ -119,6 +126,19 @@ void heki_map(unsigned long va, unsigned long end)
 {
 	struct heki_args args = {
 		.cmd = HEKI_MAP,
+	};
+
+	heki_func(va, end, &args);
+}
+
+/*
+ * Find the mappings in the given range and revert the permission counters for
+ * them.
+ */
+void heki_unmap(unsigned long va, unsigned long end)
+{
+	struct heki_args args = {
+		.cmd = HEKI_UNMAP,
 	};
 
 	heki_func(va, end, &args);
