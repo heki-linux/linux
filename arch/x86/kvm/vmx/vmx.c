@@ -5444,6 +5444,7 @@ static int handle_cr(struct kvm_vcpu *vcpu)
 	int reg;
 	int err;
 	int ret;
+	bool exit = false;
 
 	exit_qualification = vmx_get_exit_qual(vcpu);
 	cr = exit_qualification & 15;
@@ -5453,8 +5454,8 @@ static int handle_cr(struct kvm_vcpu *vcpu)
 		val = kvm_register_read(vcpu, reg);
 		trace_kvm_cr_write(cr, val);
 
-		ret = heki_check_cr(vcpu, cr, val);
-		if (ret)
+		ret = heki_check_cr(vcpu, cr, val, &exit);
+		if (exit)
 			return ret;
 
 		switch (cr) {

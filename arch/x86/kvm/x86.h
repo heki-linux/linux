@@ -292,18 +292,19 @@ static inline bool kvm_check_has_quirk(struct kvm *kvm, u64 quirk)
 
 #ifdef CONFIG_HEKI
 
-int heki_check_cr(struct kvm_vcpu *vcpu, unsigned long cr, unsigned long val);
+int heki_check_cr(struct kvm_vcpu *vcpu, unsigned long cr, unsigned long val,
+		  bool *exit);
 
 #else /* CONFIG_HEKI */
 
 static inline int heki_check_cr(struct kvm_vcpu *vcpu, unsigned long cr,
-				unsigned long val)
+				unsigned long val, bool *exit)
 {
 	return 0;
 }
 
 static inline int heki_lock_cr(struct kvm_vcpu *const vcpu, unsigned long cr,
-			       unsigned long pin)
+			       unsigned long pin, bool *exit)
 {
 	return 0;
 }

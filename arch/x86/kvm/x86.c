@@ -119,6 +119,10 @@ static u64 __read_mostly cr4_reserved_bits = CR4_RESERVED_BITS;
 
 #define KVM_CAP_PMU_VALID_MASK KVM_PMU_CAP_DISABLE
 
+#define KVM_HEKI_EXIT_REASON_VALID_MASK ( \
+	KVM_HEKI_EXIT_REASON_CR0 | \
+	KVM_HEKI_EXIT_REASON_CR4)
+
 #define KVM_X2APIC_API_VALID_FLAGS (KVM_X2APIC_API_USE_32BIT_IDS | \
                                     KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK)
 
@@ -4644,6 +4648,10 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		if (kvm_is_vm_type_supported(KVM_X86_SW_PROTECTED_VM))
 			r |= BIT(KVM_X86_SW_PROTECTED_VM);
 		break;
+	case KVM_CAP_HEKI_CONFIGURE:
+	case KVM_CAP_HEKI_DENIAL:
+		r = KVM_HEKI_EXIT_REASON_VALID_MASK;
+		break;
 	default:
 		break;
 	}
@@ -6518,6 +6526,22 @@ split_irqchip_unlock:
 		}
 		mutex_unlock(&kvm->lock);
 		break;
+#ifdef CONFIG_HEKI
+	case KVM_CAP_HEKI_CONFIGURE:
+		r = -EINVAL;
+		if (cap->args[0] & ~KVM_HEKI_EXIT_REASON_VALID_MASK)
+			break;
+		kvm->heki_configure_exit_reason = cap->args[0];
+		r = 0;
+		break;
+	case KVM_CAP_HEKI_DENIAL:
+		r = -EINVAL;
+		if (cap->args[0] & ~KVM_HEKI_EXIT_REASON_VALID_MASK)
+			break;
+		kvm->heki_denial_exit_reason = cap->args[0];
+		r = 0;
+		break;
+#endif
 	default:
 		r = -EINVAL;
 		break;
@@ -8056,11 +8080,60 @@ static unsigned long emulator_get_cr(struct x86_emulate_ctxt *ctxt, int cr)
 
 #ifdef CONFIG_HEKI
 
+static int complete_heki_configure_exit(struct kvm_vcpu *const vcpu)
+{
+	kvm_rax_write(vcpu, 0);
+	++vcpu->stat.hypercalls;
+	return kvm_skip_emulated_instruction(vcpu);
+}
+
+static int complete_heki_denial_exit(struct kvm_vcpu *const vcpu)
+{
+	kvm_inject_gp(vcpu, 0);
+	return 1;
+}
+
+/* Returns true if the @exit_reason is handled by @vcpu->kvm. */
+static bool heki_exit_cr(struct kvm_vcpu *const vcpu, const __u32 exit_reason,
+			 const u64 heki_reason, unsigned long value)
+{
+	switch (exit_reason) {
+	case KVM_EXIT_HEKI_CONFIGURE:
+		if (!(vcpu->kvm->heki_configure_exit_reason & heki_reason))
+			return false;
+
+		vcpu->run->heki_configure.reason = heki_reason;
+		memset(vcpu->run->heki_configure.reserved, 0,
+		       sizeof(vcpu->run->heki_configure.reserved));
+		vcpu->run->heki_configure.cr_pinned = value;
+		vcpu->arch.complete_userspace_io = complete_heki_configure_exit;
+		break;
+	case KVM_EXIT_HEKI_DENIAL:
+		if (!(vcpu->kvm->heki_denial_exit_reason & heki_reason))
+			return false;
+
+		vcpu->run->heki_denial.reason = heki_reason;
+		memset(vcpu->run->heki_denial.reserved, 0,
+		       sizeof(vcpu->run->heki_denial.reserved));
+		vcpu->run->heki_denial.cr_value = value;
+		vcpu->arch.complete_userspace_io = complete_heki_denial_exit;
+		break;
+	default:
+		WARN_ON_ONCE(1);
+		return false;
+	}
+
+	vcpu->run->exit_reason = exit_reason;
+	return true;
+}
+
 #define HEKI_ABI_VERSION 1
 
 static int heki_lock_cr(struct kvm_vcpu *const vcpu, const unsigned long cr,
-			unsigned long pin, unsigned long flags)
+			unsigned long pin, unsigned long flags, bool *exit)
 {
+	*exit = false;
+
 	if (flags) {
 		if ((flags == KVM_LOCK_CR_UPDATE_VERSION) && !cr && !pin)
 			return HEKI_ABI_VERSION;
@@ -8080,6 +8153,8 @@ static int heki_lock_cr(struct kvm_vcpu *const vcpu, const unsigned long cr,
 			return -KVM_EINVAL;
 
 		atomic_long_or(pin, &vcpu->kvm->heki_pinned_cr0);
+		*exit = heki_exit_cr(vcpu, KVM_EXIT_HEKI_CONFIGURE,
+				     KVM_HEKI_EXIT_REASON_CR0, pin);
 		return 0;
 	case 4:
 		/* Checks for irrelevant bits. */
@@ -8089,15 +8164,25 @@ static int heki_lock_cr(struct kvm_vcpu *const vcpu, const unsigned long cr,
 		/* Ignores bits not present in host. */
 		pin &= __read_cr4();
 		atomic_long_or(pin, &vcpu->kvm->heki_pinned_cr4);
+		*exit = heki_exit_cr(vcpu, KVM_EXIT_HEKI_CONFIGURE,
+				     KVM_HEKI_EXIT_REASON_CR4, pin);
 		return 0;
 	}
 	return -KVM_EINVAL;
 }
 
+/*
+ * Sets @exit to true if the caller must exit (i.e. denied access) with the
+ * returned value:
+ * - 0 when kvm_run is configured;
+ * - 1 when there is no user space handler.
+ */
 int heki_check_cr(struct kvm_vcpu *const vcpu, const unsigned long cr,
-		  const unsigned long val)
+		  const unsigned long val, bool *exit)
 {
 	unsigned long pinned;
+
+	*exit = false;
 
 	switch (cr) {
 	case 0:
@@ -8105,8 +8190,11 @@ int heki_check_cr(struct kvm_vcpu *const vcpu, const unsigned long cr,
 		if ((val & pinned) != pinned) {
 			pr_warn_ratelimited(
 				"heki: Blocked CR0 update: 0x%lx\n", val);
-			kvm_inject_gp(vcpu, 0);
-			return 1;
+			*exit = true;
+			if (heki_exit_cr(vcpu, KVM_EXIT_HEKI_DENIAL,
+					 KVM_HEKI_EXIT_REASON_CR0, val))
+				return 0;
+			return complete_heki_denial_exit(vcpu);
 		}
 		return 0;
 	case 4:
@@ -8114,8 +8202,11 @@ int heki_check_cr(struct kvm_vcpu *const vcpu, const unsigned long cr,
 		if ((val & pinned) != pinned) {
 			pr_warn_ratelimited(
 				"heki: Blocked CR4 update: 0x%lx\n", val);
-			kvm_inject_gp(vcpu, 0);
-			return 1;
+			*exit = true;
+			if (heki_exit_cr(vcpu, KVM_EXIT_HEKI_DENIAL,
+					 KVM_HEKI_EXIT_REASON_CR4, val))
+				return 0;
+			return complete_heki_denial_exit(vcpu);
 		}
 		return 0;
 	}
@@ -8129,9 +8220,10 @@ static int emulator_set_cr(struct x86_emulate_ctxt *ctxt, int cr, ulong val)
 {
 	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
 	int res = 0;
+	bool exit = false;
 
-	res = heki_check_cr(vcpu, cr, val);
-	if (res)
+	res = heki_check_cr(vcpu, cr, val, &exit);
+	if (exit)
 		return res;
 
 	switch (cr) {
@@ -9998,7 +10090,11 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		if (a0 > U32_MAX) {
 			ret = -KVM_EINVAL;
 		} else {
-			ret = heki_lock_cr(vcpu, a0, a1, a2);
+			bool exit = false;
+
+			ret = heki_lock_cr(vcpu, a0, a1, a2, &exit);
+			if (exit)
+				return ret;
 		}
 		break;
 #endif /* CONFIG_HEKI */

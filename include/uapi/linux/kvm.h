@@ -279,6 +279,8 @@ struct kvm_xen_exit {
 #define KVM_EXIT_RISCV_CSR        36
 #define KVM_EXIT_NOTIFY           37
 #define KVM_EXIT_MEMORY_FAULT     38
+#define KVM_EXIT_HEKI_CONFIGURE   39
+#define KVM_EXIT_HEKI_DENIAL      40
 
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -532,6 +534,24 @@ struct kvm_run {
 			__u64 gpa;
 			__u64 size;
 		} memory_fault;
+		/* KVM_EXIT_HEKI_CONFIGURE */
+		struct {
+#define KVM_HEKI_EXIT_REASON_CR0	(1ULL << 0)
+#define KVM_HEKI_EXIT_REASON_CR4	(1ULL << 1)
+			__u64 reason;
+			union {
+				__u64 cr_pinned;
+				__u64 reserved[7]; /* ignored */
+			};
+		} heki_configure;
+		/* KVM_EXIT_HEKI_DENIAL */
+		struct {
+			__u64 reason;
+			union {
+				__u64 cr_value;
+				__u64 reserved[7]; /* ignored */
+			};
+		} heki_denial;
 		/* Fix the size of the union. */
 		char padding[256];
 	};
@@ -1219,6 +1239,8 @@ struct kvm_ppc_resize_hpt {
 #define KVM_CAP_MEMORY_ATTRIBUTES 232
 #define KVM_CAP_GUEST_MEMFD 233
 #define KVM_CAP_VM_TYPES 234
+#define KVM_CAP_HEKI_CONFIGURE 235
+#define KVM_CAP_HEKI_DENIAL 236
 
 #ifdef KVM_CAP_IRQ_ROUTING
 

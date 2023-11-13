@@ -838,6 +838,8 @@ struct kvm {
 #ifdef CONFIG_HEKI
 	atomic_long_t heki_pinned_cr0;
 	atomic_long_t heki_pinned_cr4;
+	u64 heki_configure_exit_reason;
+	u64 heki_denial_exit_reason;
 #endif /* CONFIG_HEKI */
 
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
