@@ -88,6 +88,13 @@ void heki_callback(struct heki_args *args)
 			heki_update_counters(counters, 0, permissions, 0);
 			break;
 
+		case HEKI_UPDATE:
+			if (!counters)
+				continue;
+			heki_update_counters(counters, permissions, args->set,
+					     args->clear);
+			break;
+
 		case HEKI_UNMAP:
 			if (WARN_ON_ONCE(!counters))
 				break;
@@ -126,6 +133,22 @@ void heki_map(unsigned long va, unsigned long end)
 {
 	struct heki_args args = {
 		.cmd = HEKI_MAP,
+	};
+
+	heki_func(va, end, &args);
+}
+
+/*
+ * Find the mappings in the given range and update permission counters for
+ * them. Apply permissions in the host page table.
+ */
+void heki_update(unsigned long va, unsigned long end, unsigned long set,
+		 unsigned long clear)
+{
+	struct heki_args args = {
+		.cmd = HEKI_UPDATE,
+		.set = set,
+		.clear = clear,
 	};
 
 	heki_func(va, end, &args);

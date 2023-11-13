@@ -54,3 +54,12 @@ unsigned long heki_flags_to_permissions(unsigned long flags)
 
 	return permissions;
 }
+
+void heki_pgprot_to_permissions(pgprot_t prot, unsigned long *set,
+				unsigned long *clear)
+{
+	if (pgprot_val(prot) & _PAGE_RW)
+		*set |= MEM_ATTR_WRITE;
+	if (pgprot_val(prot) & _PAGE_NX)
+		*clear |= MEM_ATTR_EXEC;
+}

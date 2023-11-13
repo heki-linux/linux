@@ -73,6 +73,7 @@ struct heki_hypervisor {
  *
  *	- a page is mapped into the kernel address space
  *	- a page is unmapped from the kernel address space
+ *	- permissions are changed for a mapped page
  */
 struct heki {
 	struct heki_hypervisor *hypervisor;
@@ -81,6 +82,7 @@ struct heki {
 
 enum heki_cmd {
 	HEKI_MAP,
+	HEKI_UPDATE,
 	HEKI_UNMAP,
 };
 
@@ -98,6 +100,10 @@ struct heki_args {
 
 	/* Command passed by caller. */
 	enum heki_cmd cmd;
+
+	/* Permissions passed by heki_update(). */
+	unsigned long set;
+	unsigned long clear;
 };
 
 /* Callback function called by the table walker. */
@@ -114,11 +120,15 @@ void heki_counters_init(void);
 void heki_walk(unsigned long va, unsigned long va_end, heki_func_t func,
 	       struct heki_args *args);
 void heki_map(unsigned long va, unsigned long end);
+void heki_update(unsigned long va, unsigned long end, unsigned long set,
+		 unsigned long clear);
 void heki_unmap(unsigned long va, unsigned long end);
 
 /* Arch-specific functions. */
 void heki_arch_early_init(void);
 unsigned long heki_flags_to_permissions(unsigned long flags);
+void heki_pgprot_to_permissions(pgprot_t prot, unsigned long *set,
+				unsigned long *clear);
 
 #else /* !CONFIG_HEKI */
 
@@ -129,6 +139,10 @@ static inline void heki_late_init(void)
 {
 }
 static inline void heki_map(unsigned long va, unsigned long end)
+{
+}
+static inline void heki_update(unsigned long va, unsigned long end,
+			       unsigned long set, unsigned long clear)
 {
 }
 static inline void heki_unmap(unsigned long va, unsigned long end)

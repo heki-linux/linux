@@ -22,6 +22,7 @@
 #include <linux/cc_platform.h>
 #include <linux/set_memory.h>
 #include <linux/memregion.h>
+#include <linux/heki.h>
 
 #include <asm/e820/api.h>
 #include <asm/processor.h>
@@ -2056,11 +2057,56 @@ int clear_mce_nospec(unsigned long pfn)
 EXPORT_SYMBOL_GPL(clear_mce_nospec);
 #endif /* CONFIG_X86_64 */
 
+#ifdef CONFIG_HEKI
+
+static void heki_change_page_attr_set(unsigned long va, int numpages,
+				      pgprot_t set)
+{
+	unsigned long va_end;
+	unsigned long set_permissions = 0, clear_permissions = 0;
+
+	heki_pgprot_to_permissions(set, &set_permissions, &clear_permissions);
+	if (!(set_permissions | clear_permissions))
+		return;
+
+	va_end = va + (numpages << PAGE_SHIFT);
+	heki_update(va, va_end, set_permissions, clear_permissions);
+}
+
+static void heki_change_page_attr_clear(unsigned long va, int numpages,
+					pgprot_t clear)
+{
+	unsigned long va_end;
+	unsigned long set_permissions = 0, clear_permissions = 0;
+
+	heki_pgprot_to_permissions(clear, &clear_permissions, &set_permissions);
+	if (!(set_permissions | clear_permissions))
+		return;
+
+	va_end = va + (numpages << PAGE_SHIFT);
+	heki_update(va, va_end, set_permissions, clear_permissions);
+}
+
+#else /* !CONFIG_HEKI */
+
+static void heki_change_page_attr_set(unsigned long va, int numpages,
+				      pgprot_t set)
+{
+}
+
+static void heki_change_page_attr_clear(unsigned long va, int numpages,
+					pgprot_t clear)
+{
+}
+
+#endif /* CONFIG_HEKI */
+
 int set_memory_x(unsigned long addr, int numpages)
 {
 	if (!(__supported_pte_mask & _PAGE_NX))
 		return 0;
 
+	heki_change_page_attr_clear(addr, numpages, __pgprot(_PAGE_NX));
 	return change_page_attr_clear(&addr, numpages, __pgprot(_PAGE_NX), 0);
 }
 
@@ -2069,11 +2115,14 @@ int set_memory_nx(unsigned long addr, int numpages)
 	if (!(__supported_pte_mask & _PAGE_NX))
 		return 0;
 
+	heki_change_page_attr_set(addr, numpages, __pgprot(_PAGE_NX));
 	return change_page_attr_set(&addr, numpages, __pgprot(_PAGE_NX), 0);
 }
 
 int set_memory_ro(unsigned long addr, int numpages)
 {
+	// TODO: What about _PAGE_DIRTY?
+	heki_change_page_attr_clear(addr, numpages, __pgprot(_PAGE_RW));
 	return change_page_attr_clear(&addr, numpages, __pgprot(_PAGE_RW | _PAGE_DIRTY), 0);
 }
 
@@ -2084,11 +2133,13 @@ int set_memory_rox(unsigned long addr, int numpages)
 	if (__supported_pte_mask & _PAGE_NX)
 		clr.pgprot |= _PAGE_NX;
 
+	heki_change_page_attr_clear(addr, numpages, clr);
 	return change_page_attr_clear(&addr, numpages, clr, 0);
 }
 
 int set_memory_rw(unsigned long addr, int numpages)
 {
+	heki_change_page_attr_set(addr, numpages, __pgprot(_PAGE_RW));
 	return change_page_attr_set(&addr, numpages, __pgprot(_PAGE_RW), 0);
 }
 
